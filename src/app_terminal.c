@@ -75,7 +75,7 @@ static void exec_line(char *line) {
         if (!sdfs_read_file(args, script_buf, sizeof(script_buf), &len)) { os_print("Cannot open script.\n"); return; }
         pscript_run(script_buf);
     }
-    else if (!strcmp(line, "edit")) { app_editor(); os_clear_screen(); }
+    else if (!strcmp(line, "edit")) { app_editor(); os_gem_desktop_bg(); os_term_attach_window(); os_clear_screen(); os_print("(back in terminal)\n"); }
     else if (!strcmp(line, "rm") || !strcmp(line, "del")) {
         os_print(f_unlink(args) == FR_OK ? "Deleted.\n" : "Delete failed.\n");
     }
@@ -104,25 +104,32 @@ static void exec_line(char *line) {
     else {
         /* try to run as app name */
         for (int i = 0; i < app_count; i++)
-            if (!strcmp(line, apps[i].name)) { apps[i].run(); os_clear_screen(); return; }
+            if (!strcmp(line, apps[i].name)) {
+                apps[i].run();
+                os_gem_desktop_bg(); os_term_attach_window(); os_clear_screen();
+                os_print("(back in terminal)\n");
+                return;
+            }
         os_print("Unknown command. Type 'help'.\n");
     }
 }
 
 void app_terminal(void) {
+    os_gem_desktop_bg();
+    os_term_attach_window();
     os_term_init();
     os_clear_screen();
-    os_set_color(COL_GREEN, COL_BLACK);
+    os_set_color(GEM_BLACK, GEM_WHITE);
     os_print("PRetroCalc OS v1.0 - 520K RAM - RP2350 @ 200MHz\n");
     os_print("Type 'help' for commands. ESC to exit.\n\n");
     static char line[120];
     for (;;) {
-        os_set_color(COL_CYAN, COL_BLACK);
+        os_set_color(GEM_GREEN, GEM_WHITE);
         os_print("> ");
-        os_set_color(COL_GREEN, COL_BLACK);
+        os_set_color(GEM_BLACK, GEM_WHITE);
         int r = os_read_line(line, sizeof(line));
-        if (r < 0) return;  /* ESC */
-        if (!strcmp(line, "exit") || !strcmp(line, "quit")) return;
+        if (r < 0) { os_term_fullscreen(); return; }  /* ESC */
+        if (!strcmp(line, "exit") || !strcmp(line, "quit")) { os_term_fullscreen(); return; }
         exec_line(line);
     }
 }

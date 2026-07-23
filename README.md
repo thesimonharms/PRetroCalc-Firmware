@@ -16,8 +16,15 @@ the SD card (an `AUTORUN.PS` on the card runs at boot, like `AUTOEXEC.BAT`).
 - **Terminal shell** with history, `ls`/`cat`/`run`/`edit`/`mem`/`bat`/`beep`…
 - **Apps:** file manager, text editor (F2 = save), calculator (expression
   parser with `+ - * / % ^` and parentheses), system monitor, settings
-  (LCD/keyboard backlight, key click, power off), about screen
+  (LCD/keyboard backlight, key click, power off), about screen, **LLM chat**
+  over WiFi
 - **Games:** Snake, Breakout, Space Invaders, Conway's Game of Life
+- **WiFi/Networking:** CYW43 + lwIP (poll mode) with a minimal plain-HTTP
+  client. The CHAT app talks to LAN LLM servers that don't need TLS —
+  Ollama (`/api/generate`), llama.cpp (`/completion`), or any
+  OpenAI-compatible `/v1/chat/completions` endpoint. Configure via
+  `CHAT.CFG` on the SD card (ssid, password, host, port, path, model), or
+  answer the prompts. HTTPS to public APIs is not supported (no TLS stack).
 - **PicoScript VM:** `let/print/if/while/for/sub/input` plus graphics
   (`pset/line/rect/fillrect/circle/text/color/flush`), `beep`, `sleep`,
   `rnd`, `key` — compiled to bytecode, not interpreted line-by-line

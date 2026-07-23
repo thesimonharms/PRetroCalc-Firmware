@@ -12,12 +12,14 @@
 #include "apps.h"
 #include "sdfs.h"
 #include "pscript.h"
+#include "net.h"
 
 const app_t apps[] = {
     {"TERM",    "Command shell + PicoScript", app_terminal, COL_LGREEN},
     {"FILES",   "SD card file manager",       app_files,    COL_CYAN},
     {"EDIT",    "Text editor",                app_editor,   COL_AMBER},
     {"CALC",    "Calculator",                 app_calc,     COL_WHITE},
+    {"CHAT",    "LLM chat over WiFi",         app_chat,     COL_CYAN},
     {"SNAKE",   "Classic snake game",         app_snake,    COL_GREEN},
     {"BREAKOUT","Brick breaker",              app_breakout, COL_ORANGE},
     {"INVADERS","Space invaders",             app_invaders, COL_MAGENTA},
@@ -106,6 +108,7 @@ static void launcher(void) {
         for (;;) {
             kbd_poll();
             sound_update();
+            net_poll();
             if (time_reached(bat_refresh)) { bat_refresh = make_timeout_time_ms(30000); break; /* redraw for battery */ }
             if (kbd_get_event(&ev) && ev.type == KBD_EV_PRESS) break;
             sleep_ms(4);

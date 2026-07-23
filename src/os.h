@@ -31,6 +31,10 @@ void os_window_close_box(void);         /* redraws the close box highlight */
 void os_gem_desktop_bg(void);
 void os_gem_menubar(const char *left, const char *right);
 
+/* terminal placement: attach to a GEM window or go fullscreen */
+void os_term_attach_window(void);
+void os_term_fullscreen(void);
+
 /* line input with editing + history; returns length, -1 on ESC-cancel */
 int  os_read_line(char *buf, int maxlen);
 

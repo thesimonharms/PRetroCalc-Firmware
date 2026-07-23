@@ -46,6 +46,12 @@ static uint8_t sym_map(uint8_t c) {
     }
 }
 
+/* I2C timeout: at 10kHz a 2-byte transaction takes ~2ms, but the STM32 BIOS
+ * can stretch the clock while it services other interrupts. The reference
+ * driver uses 500ms; 100ms was too aggressive and caused spurious failures
+ * (which read back as 0% battery). */
+#define KBD_I2C_TIMEOUT_US 500000
+
 void kbd_init(void) {
     gpio_set_function(KBD_PIN_SDA, GPIO_FUNC_I2C);
     gpio_set_function(KBD_PIN_SCL, GPIO_FUNC_I2C);
@@ -55,20 +61,20 @@ void kbd_init(void) {
     i2c_ok = true;
     /* enable "mods reported separately + applied" in the BIOS config */
     uint8_t msg[2] = { (uint8_t)(0x02 | 0x80), 0xD0 }; /* CFG: REPORT_MODS|USE_MODS|KEY_INT */
-    i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, msg, 2, false, 100000);
+    i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, msg, 2, false, KBD_I2C_TIMEOUT_US);
 }
 
 static int kbd_reg_read16(uint8_t reg, uint16_t *out) {
     if (!i2c_ok) return -1;
-    int r = i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, &reg, 1, true, 100000);
+    int r = i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, &reg, 1, true, KBD_I2C_TIMEOUT_US);
     if (r < 0) return r;
-    return i2c_read_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, (uint8_t *)out, 2, false, 100000);
+    return i2c_read_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, (uint8_t *)out, 2, false, KBD_I2C_TIMEOUT_US);
 }
 
 void kbd_reg_write(uint8_t reg, uint8_t val) {
     if (!i2c_ok) return;
     uint8_t msg[2] = { (uint8_t)(reg | 0x80), val };
-    i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, msg, 2, false, 100000);
+    i2c_write_timeout_us(KBD_I2C_MOD, KBD_I2C_ADDR, msg, 2, false, KBD_I2C_TIMEOUT_US);
 }
 
 void kbd_set_backlight(uint8_t v)  { kbd_reg_write(REG_ID_BK2, v); }
@@ -76,8 +82,14 @@ void kbd_set_lcd_backlight(uint8_t v) { kbd_reg_write(REG_ID_BKL, v); }
 
 int kbd_battery_percent(void) {
     uint16_t v = 0;
-    if (kbd_reg_read16(REG_ID_BAT, &v) < 0) return -1;
-    return v & 0xFF;
+    /* retry once on transient I2C failure before giving up */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (kbd_reg_read16(REG_ID_BAT, &v) >= 0) {
+            int pct = v & 0xFF;
+            if (pct >= 0 && pct <= 100) return pct;
+        }
+    }
+    return -1;
 }
 
 void kbd_power_off(void) {

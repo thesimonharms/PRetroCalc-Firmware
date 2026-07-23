@@ -4,6 +4,7 @@
 #include "font.h"
 #include "keyboard.h"
 #include "sound.h"
+#include "net.h"
 #include "apps.h"
 #include "board.h"
 #include "pico/stdlib.h"
@@ -17,11 +18,24 @@
 #define HIST_MAX    8
 #define LINE_MAX    120
 
+/* Terminal geometry: when windowed, text lives in the GEM window client area.
+ * Term buffer is TERM_COLS x TERM_ROWS (40x40); only the visible portion is
+ * drawn. Term uses a scrollback so long output never "goes off screen". */
+#define TERM_VIS_COLS 36
+#define TERM_WIN_VIS_ROWS 33
+
 bool os_sd_present = false;
 
 static char screen[TERM_ROWS][TERM_COLS];
 static int cur_col = 0, cur_row = 0;      /* cursor in screen coords */
 static uint8_t cur_fg = COL_LGREEN, cur_bg = COL_BLACK;
+
+/* terminal render origin + windowed flag (windowed = draw into GEM window) */
+static int term_ox = 0, term_oy = TERM_TOP;
+static bool term_windowed = false;
+
+static int term_cols(void) { return term_windowed ? TERM_VIS_COLS : TERM_COLS; }
+static int term_rows(void) { return term_windowed ? TERM_WIN_VIS_ROWS : TERM_VIS_ROWS; }
 
 static char history[HIST_MAX][LINE_MAX];
 static int hist_count = 0;
@@ -39,16 +53,21 @@ void os_term_init(void) {
 
 void os_set_color(uint8_t fg, uint8_t bg) { cur_fg = fg; cur_bg = bg; }
 
+/* forward decls of geometry helpers defined below */
+static int term_cols(void);
+static int term_rows(void);
+
 void os_putchar(char c) {
+    int cols = term_cols(), rows = term_rows();
     if (c == '\n') {
         cur_col = 0;
-        if (++cur_row >= TERM_ROWS) scroll();
+        if (++cur_row >= rows) scroll();
         return;
     }
     if (c == '\r') { cur_col = 0; return; }
     if (c == '\b') { if (cur_col > 0) screen[cur_row][--cur_col] = ' '; return; }
     screen[cur_row][cur_col] = c;
-    if (++cur_col >= TERM_COLS) { cur_col = 0; if (++cur_row >= TERM_ROWS) scroll(); }
+    if (++cur_col >= cols) { cur_col = 0; if (++cur_row >= rows) scroll(); }
 }
 
 void os_print(const char *s) { while (*s) os_putchar(*s++); }
@@ -63,7 +82,11 @@ void os_printf(const char *fmt, ...) {
 
 void os_clear_screen(void) {
     os_term_init();
-    gfx_fill_rect(0, TERM_TOP, LCD_WIDTH, LCD_HEIGHT - TERM_TOP, COL_BLACK);
+    if (term_windowed) {
+        gfx_fill_rect(term_ox, term_oy, term_cols() * FONT_W, term_rows() * FONT_H, GEM_WHITE);
+    } else {
+        gfx_fill_rect(0, TERM_TOP, LCD_WIDTH, LCD_HEIGHT - TERM_TOP, COL_BLACK);
+    }
 }
 
 void os_draw_status_bar(void) {
@@ -76,16 +99,33 @@ void os_draw_status_bar(void) {
     gfx_hline(0, STATUS_H - 1, LCD_WIDTH, COL_CYAN);
 }
 
-/* repaint the terminal text region only */
+/* call after drawing a GEM window; text will be placed inside it */
+void os_term_attach_window(void) {
+    int cx, cy, cw, ch;
+    os_window("TERMINAL", &cx, &cy, &cw, &ch);
+    term_ox = cx; term_oy = cy;
+    term_windowed = true;
+}
+
+void os_term_fullscreen(void) {
+    term_ox = 0; term_oy = TERM_TOP;
+    term_windowed = false;
+}
+
+/* repaint the terminal text region */
 void os_render_term(void) {
-    gfx_fill_rect(0, TERM_TOP, LCD_WIDTH, LCD_HEIGHT - TERM_TOP, cur_bg);
-    for (int r = 0; r < TERM_ROWS; r++)
-        for (int c = 0; c < TERM_COLS; c++) {
+    int cols = term_cols(), rows = term_rows();
+    int ox = term_ox, oy = term_oy;
+    uint8_t bg = term_windowed ? GEM_WHITE : cur_bg;
+    uint8_t fg = term_windowed ? GEM_BLACK : cur_fg;
+    gfx_fill_rect(ox, oy, cols * FONT_W, rows * FONT_H, bg);
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
             char ch = screen[r][c];
-            if (ch != ' ') gfx_glyph(c * FONT_W, TERM_TOP + r * FONT_H, ch, cur_fg, cur_bg);
+            if (ch != ' ') gfx_glyph(ox + c * FONT_W, oy + r * FONT_H, ch, fg, bg);
         }
     /* cursor */
-    gfx_fill_rect(cur_col * FONT_W, TERM_TOP + cur_row * FONT_H + FONT_H - 1, FONT_W, 1, cur_fg);
+    gfx_fill_rect(ox + cur_col * FONT_W, oy + cur_row * FONT_H + FONT_H - 1, FONT_W, 1, fg);
 }
 
 static void hist_push(const char *line) {
@@ -159,6 +199,7 @@ int os_read_line(char *buf, int maxlen) {
         for (;;) {
             kbd_poll();
             sound_update();
+            net_poll();
             if (kbd_get_event(&ev)) break;
             sleep_ms(4);
         }

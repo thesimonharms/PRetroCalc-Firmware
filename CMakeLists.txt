@@ -25,6 +25,8 @@ add_executable(pretrocalc
     src/app_terminal.c
     src/app_util.c
     src/app_games.c
+    src/net.c
+    src/app_chat.c
 )
 
 target_include_directories(pretrocalc PRIVATE src lib)
@@ -41,6 +43,7 @@ target_link_libraries(pretrocalc
     hardware_pwm
     hardware_dma
     hardware_watchdog
+    pico_cyw43_arch_lwip_poll
     no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
 )
 
