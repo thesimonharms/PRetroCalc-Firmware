@@ -21,6 +21,12 @@ bool net_ip_str(char *out, int maxlen);    /* "192.168.1.42" */
 int  net_http_post(const char *host, uint16_t port, const char *path,
                    const char *body, char *resp, int resp_max, int timeout_ms);
 
+/* Blocking HTTP GET to http://host:port/path.
+ * Writes the response body into resp (NUL-terminated, up to resp_max).
+ * Returns response length, or a negative NET_ERR_* code (same as POST). */
+int  net_http_get(const char *host, uint16_t port, const char *path,
+                  char *resp, int resp_max, int timeout_ms);
+
 /* must be called periodically from the main loop (lwIP poll mode) */
 void net_poll(void);
 

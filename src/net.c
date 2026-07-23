@@ -190,8 +190,11 @@ static void err_cb(void *arg, err_t err) {
 #define NET_ERR_CONNECT -5
 #define NET_ERR_IO      -6
 
-int net_http_post(const char *host, uint16_t port, const char *path,
-                  const char *body, char *resp, int resp_max, int timeout_ms) {
+/* core: send a pre-built HTTP request over TCP, wait for the full body, then
+ * strip headers and return the body length (or a NET_ERR_* negative code).
+ * Shared by net_http_post and net_http_get. */
+static int http_xact(const char *host, uint16_t port, const char *req, int req_len,
+                     char *resp, int resp_max, int timeout_ms) {
     net_last_recv_len = 0;
     net_last_err = 0;
     if (!connected) return NET_ERR_NOTCONN;
@@ -199,20 +202,11 @@ int net_http_post(const char *host, uint16_t port, const char *path,
 
     static http_t h;
     memset(&h, 0, sizeof h);
-    h.content_length = -1;   /* unknown until parse_headers finds the header */
-    h.body_offset = -1;       /* no header/body boundary seen yet */
+    h.content_length = -1;
+    h.body_offset = -1;
     h.resp = resp; h.resp_max = resp_max;
-
-    /* build request */
-    static char req[2048];
-    int blen = strlen(body);
-    int hostlen = strlen(host);
-    if (blen + hostlen + 256 > (int)sizeof(req)) return NET_ERR_BODY;
-    h.req_len = snprintf(req, sizeof req,
-        "POST %s HTTP/1.0\r\nHost: %s\r\nContent-Type: application/json\r\n"
-        "Content-Length: %d\r\nConnection: close\r\n\r\n%s",
-        path, host, blen, body);
     h.request = req;
+    h.req_len = req_len;
 
     /* resolve host (may be an IP literal) */
     ip_addr_t addr;
@@ -235,14 +229,10 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     err_t ce = tcp_connect(h.pcb, &h.addr, port, connect_cb);
     if (ce != ERR_OK) { tcp_close(h.pcb); return NET_ERR_CONNECT; }
 
-    /* wait until full body received (done), error, or timeout.
-     * done is set when: server closes cleanly OR body_complete(). */
     while (!h.err && !h.done && !time_reached(deadline)) {
         net_poll();
         sleep_ms(2);
     }
-    /* if server closed without a Content-Length (chunked/HTTP1.0 close), we
-     * may still have a complete body; accept whatever arrived. */
     if (h.pcb) { tcp_abort(h.pcb); h.pcb = NULL; }
     net_last_recv_len = h.resp_len;
     if (h.err && h.resp_len == 0) return NET_ERR_IO;
@@ -258,4 +248,29 @@ int net_http_post(const char *host, uint16_t port, const char *path,
         return bl;
     }
     return h.resp_len;
+}
+
+int net_http_post(const char *host, uint16_t port, const char *path,
+                  const char *body, char *resp, int resp_max, int timeout_ms) {
+    static char req[2048];
+    int blen = strlen(body);
+    int hostlen = strlen(host);
+    if (blen + hostlen + 256 > (int)sizeof(req)) return NET_ERR_BODY;
+    int req_len = snprintf(req, sizeof req,
+        "POST %s HTTP/1.0\r\nHost: %s\r\nContent-Type: application/json\r\n"
+        "Content-Length: %d\r\nConnection: close\r\n\r\n%s",
+        path, host, blen, body);
+    return http_xact(host, port, req, req_len, resp, resp_max, timeout_ms);
+}
+
+int net_http_get(const char *host, uint16_t port, const char *path,
+                 char *resp, int resp_max, int timeout_ms) {
+    static char req[512];
+    int hostlen = strlen(host);
+    int pathlen = strlen(path);
+    if (hostlen + pathlen + 128 > (int)sizeof(req)) return NET_ERR_BODY;
+    int req_len = snprintf(req, sizeof req,
+        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n",
+        path, host);
+    return http_xact(host, port, req, req_len, resp, resp_max, timeout_ms);
 }
