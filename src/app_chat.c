@@ -122,9 +122,9 @@ static bool load_config(void) {
     for (; *p && n < 6; p++) {
         if (*p == '\n') { *p = 0; if (p[1]) lines[n++] = p + 1; }
     }
-    for (int i = 0; i < n; i++) { /* strip \r / trailing spaces */
+    for (int i = 0; i < n; i++) { /* strip \r / \t / trailing spaces / non-printables */
         char *e = lines[i] + strlen(lines[i]);
-        while (e > lines[i] && (e[-1] == '\r' || e[-1] == ' ')) *--e = 0;
+        while (e > lines[i] && ((uint8_t)e[-1] < 32 || e[-1] == ' ')) *--e = 0;
     }
     if (n >= 3) {
         strncpy(ssid, lines[0], 63);
@@ -168,14 +168,16 @@ void app_chat(void) {
     net_ip_str(ip, sizeof ip);
     char conn[64]; snprintf(conn, sizeof conn, "Connected: %s", ip);
     gfx_puts_at(gx + 4, gy + 104, conn, GEM_GREEN, GEM_WHITE);
-    gfx_puts_at(gx + 4, gy + 118, "ENTER=send  ESC=exit", GEM_DGRAY, GEM_WHITE);
+    char tgt[64]; snprintf(tgt, sizeof tgt, "Server: %s:%s", host, port_s);
+    gfx_puts_at(gx + 4, gy + 114, tgt, GEM_DGRAY, GEM_WHITE);
+    gfx_puts_at(gx + 4, gy + 124, "ENTER=send  ESC=exit", GEM_DGRAY, GEM_WHITE);
     gfx_flush();
 
     int port = atoi(port_s);
     static char msg[256];
     static char body[512];
     static char resp[12288];   /* 9B models produce long replies; needs room */
-    int chat_y = gy + 132;
+    int chat_y = gy + 138;
 
     for (;;) {
         if (win_read_line(chat_y, "You: ", msg, sizeof msg, false) < 0) break;
