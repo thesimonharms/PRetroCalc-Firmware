@@ -1,0 +1,23 @@
+# PicoScript sample: starfield + greeting. Copy to SD card as STARS.PS, run with: run STARS.PS
+cls
+print "PICOSCRIPT DEMO"
+print "---------------"
+let name = 0
+input("your name? "), name
+print "hello", name
+beep(880, 100)
+color(28)
+for i = 1 to 120
+  pset(rnd(320), rnd(300)+20, rnd(255))
+next
+flush
+sleep(1000)
+color(252)
+line(0, 160, 319, 160, 252)
+flush
+for x = 0 to 319 step 8
+  circle(x, 240, 6)
+  flush
+next
+beep(1320, 150)
+print "done!"
