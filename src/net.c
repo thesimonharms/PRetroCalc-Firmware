@@ -12,6 +12,7 @@
 
 static bool inited = false;
 static bool connected = false;
+int net_last_recv_len = 0;
 
 void net_poll(void) {
     if (inited) cyw43_arch_poll();
@@ -68,6 +69,7 @@ typedef struct {
     int resp_len;
     bool done;
     bool err;
+    bool got_data;
     ip_addr_t addr;
     bool dns_done;
     bool dns_ok;
@@ -84,7 +86,7 @@ static void dns_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
 
 static err_t recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
     http_t *h = arg;
-    if (!p) { h->done = true; return ERR_OK; }
+    if (!p) { h->done = true; return ERR_OK; }   /* server closed connection */
     int copy = p->tot_len;
     if (h->resp_len + copy > h->resp_max - 1) copy = h->resp_max - 1 - h->resp_len;
     if (copy > 0) {
@@ -93,20 +95,25 @@ static err_t recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     }
     tcp_recved(pcb, p->tot_len);
     pbuf_free(p);
+    /* HTTP/1.0 + Connection: close means body ends at FIN. But if we've got
+     * data and a complete JSON body, we can finish early without waiting
+     * for the server to close (some servers keep-alive despite our header). */
+    if (h->resp_len > 0) h->got_data = true;
     return ERR_OK;
 }
 
 static err_t sent_cb(void *arg, struct tcp_pcb *pcb, u16_t len) {
     http_t *h = arg;
-    if (h->req_sent < h->req_len) {
+    while (h->req_sent < h->req_len) {
         int chunk = h->req_len - h->req_sent;
-        if (chunk > tcp_sndbuf(pcb)) chunk = tcp_sndbuf(pcb);
-        if (chunk > 0) {
-            tcp_write(pcb, h->request + h->req_sent, chunk, TCP_WRITE_FLAG_COPY);
-            tcp_output(pcb);
-            h->req_sent += chunk;
-        }
+        int avail = tcp_sndbuf(pcb);
+        if (avail <= 0) break;                 /* wait for next sent_cb when space frees */
+        if (chunk > avail) chunk = avail;
+        err_t e = tcp_write(pcb, h->request + h->req_sent, chunk, TCP_WRITE_FLAG_COPY);
+        if (e != ERR_OK) break;                /* mem err etc; retry on next callback */
+        h->req_sent += chunk;
     }
+    tcp_output(pcb);
     return ERR_OK;
 }
 
@@ -135,6 +142,7 @@ static void err_cb(void *arg, err_t err) {
 
 int net_http_post(const char *host, uint16_t port, const char *path,
                   const char *body, char *resp, int resp_max, int timeout_ms) {
+    net_last_recv_len = 0;
     if (!connected) return NET_ERR_NOTCONN;
     resp[0] = 0;
 
@@ -174,9 +182,23 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     err_t ce = tcp_connect(h.pcb, &h.addr, port, connect_cb);
     if (ce != ERR_OK) { tcp_close(h.pcb); return NET_ERR_CONNECT; }
 
-    while (!h.done && !h.err && !time_reached(deadline)) { net_poll(); sleep_ms(2); }
+    /* wait until: server closes (done), error, we have data + brief settle, or timeout */
+    absolute_time_t data_deadline = make_timeout_time_ms(0);
+    bool have_deadline = false;
+    while (!h.err && !time_reached(deadline)) {
+        net_poll();
+        if (h.done) break;                    /* clean close by server */
+        if (h.got_data && !have_deadline) {   /* got data; give it a moment for the rest */
+            data_deadline = make_timeout_time_ms(3000);
+            have_deadline = true;
+        }
+        if (have_deadline && time_reached(data_deadline)) break; /* settled */
+        sleep_ms(2);
+    }
     if (h.pcb) { tcp_abort(h.pcb); h.pcb = NULL; }
-    if (h.err || h.resp_len == 0) return NET_ERR_IO;
+    net_last_recv_len = h.resp_len;
+    if (h.err && h.resp_len == 0) return NET_ERR_IO;
+    if (h.resp_len == 0) return NET_ERR_IO;
     resp[h.resp_len] = 0;
     /* strip HTTP headers: body starts after the first blank line */
     char *body_start = strstr(resp, "\r\n\r\n");

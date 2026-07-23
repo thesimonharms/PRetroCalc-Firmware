@@ -24,4 +24,7 @@ int  net_http_post(const char *host, uint16_t port, const char *path,
 /* must be called periodically from the main loop (lwIP poll mode) */
 void net_poll(void);
 
+/* byte count of last completed response (for debugging) */
+extern int net_last_recv_len;
+
 #endif

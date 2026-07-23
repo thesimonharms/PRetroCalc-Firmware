@@ -206,7 +206,7 @@ void app_chat(void) {
                 rl == -4 ? "out of TCP pcbs" :
                 rl == -5 ? "TCP connect refused/unreachable" :
                            "I/O error / empty reply";
-            char eb[64]; snprintf(eb, sizeof eb, "Err %d: %s", rl, why);
+            char eb[64]; snprintf(eb, sizeof eb, "Err %d: %s (recv %d)", rl, why, net_last_recv_len);
             gfx_puts_at(gx, chat_y + 12, eb, GEM_GREEN, GEM_WHITE);
         } else {
             const char *txt = json_str(resp, "response");
