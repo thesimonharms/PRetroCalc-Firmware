@@ -263,9 +263,18 @@ void gfx_blit(int x, int y, int w, int h, const uint8_t *data) {
 static inline void expand_line(const uint8_t *src, uint8_t *dst, int n) {
     for (int i = 0; i < n; i++) {
         uint8_t p = src[i];
-        *dst++ = p & 0xE0;
-        *dst++ = p & 0x1C;
-        *dst++ = (p & 0x03) << 6;
+        /* RGB332 -> RGB666, each channel scaled to full 6-bit range then placed
+         * in the top 6 bits of the byte (ILI9488 RGB666 uses bits 7..2).
+         * The old code left blue capped at 192 -> white looked pink. */
+        uint8_t r3 = (p >> 5) & 0x07;             /* 0..7 */
+        uint8_t g3 = (p >> 2) & 0x07;             /* 0..7 */
+        uint8_t b2 = p & 0x03;                    /* 0..3 */
+        uint8_t r6 = (uint8_t)((r3 << 3) | r3);   /* 0..63 */
+        uint8_t g6 = (uint8_t)((g3 << 3) | g3);   /* 0..63 */
+        uint8_t b6 = (uint8_t)((b2 << 4) | (b2 << 2) | b2); /* 0..63 */
+        *dst++ = (uint8_t)(r6 << 2);
+        *dst++ = (uint8_t)(g6 << 2);
+        *dst++ = (uint8_t)(b6 << 2);
     }
 }
 
@@ -307,4 +316,25 @@ void gfx_scroll_up(int px, uint8_t fill) {
     memmove(gfx_fb, gfx_fb + px * LCD_WIDTH, (LCD_HEIGHT - px) * LCD_WIDTH);
     memset(gfx_fb + (LCD_HEIGHT - px) * LCD_WIDTH, fill, px * LCD_WIDTH);
     dirty_x0 = 0; dirty_y0 = 0; dirty_x1 = LCD_WIDTH - 1; dirty_y1 = LCD_HEIGHT - 1;
+}
+
+/* vertical scroll of a rectangular region of the framebuffer upward by px
+ * pixels (the top px rows are discarded, the bottom px rows are filled with
+ * the fill colour). Used to keep scrolling text inside a window without
+ * clobbering the rest of the screen. */
+void gfx_scroll_region_up(int x, int y, int w, int h, int px, uint8_t fill) {
+    if (px < 0) px = 0;
+    if (px >= h) px = h;
+    if (px > 0) {
+        for (int r = 0; r < h - px; r++)
+            memmove(&gfx_fb[(y + r) * LCD_WIDTH + x],
+                    &gfx_fb[(y + r + px) * LCD_WIDTH + x],
+                    w);
+    }
+    for (int r = h - px; r < h; r++)
+        memset(&gfx_fb[(y + r) * LCD_WIDTH + x], fill, w);
+    if (x < dirty_x0) dirty_x0 = x;
+    if (y < dirty_y0) dirty_y0 = y;
+    if (x + w - 1 > dirty_x1) dirty_x1 = x + w - 1;
+    if (y + h - 1 > dirty_y1) dirty_y1 = y + h - 1;
 }

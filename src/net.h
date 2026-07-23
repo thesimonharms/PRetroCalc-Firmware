@@ -26,5 +26,9 @@ void net_poll(void);
 
 /* byte count of last completed response (for debugging) */
 extern int net_last_recv_len;
+/* lwIP err_t captured by the last err_cb (0 if none). Lets the caller tell
+ * e.g. ERR_RST (-14) / ERR_ABRT (-13) / ERR_CONN (-11) / ERR_TIMEOUT (-3)
+ * apart, instead of just "I/O error". */
+extern int net_last_err;
 
 #endif

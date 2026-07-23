@@ -56,5 +56,6 @@ void gfx_print_n(const char *s, int n);
 void gfx_flush(void);        /* push dirty rect */
 void gfx_flush_full(void);
 void gfx_scroll_up(int px, uint8_t fill);
+void gfx_scroll_region_up(int x, int y, int w, int h, int px, uint8_t fill);
 
 #endif

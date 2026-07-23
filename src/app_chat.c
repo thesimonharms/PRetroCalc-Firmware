@@ -206,19 +206,42 @@ void app_chat(void) {
                 rl == -4 ? "out of TCP pcbs" :
                 rl == -5 ? "TCP connect refused/unreachable" :
                            "I/O error / empty reply";
-            char eb[64]; snprintf(eb, sizeof eb, "Err %d: %s (recv %d)", rl, why, net_last_recv_len);
+            char eb[80];
+            snprintf(eb, sizeof eb, "Err %d: %s (recv %d, lwip %d)",
+                     rl, why, net_last_recv_len, net_last_err);
             gfx_puts_at(gx, chat_y + 12, eb, GEM_GREEN, GEM_WHITE);
         } else {
             const char *txt = json_str(resp, "response");
             if (!txt) txt = json_str(resp, "content");
             if (!txt) txt = json_str(resp, "text");
             if (!txt) txt = resp; /* fallback: dump raw */
-            /* word-wrap into window */
-            int x = gx, y = chat_y + 12;
+            /* word-wrap into window; long replies scroll within the chat region */
+            const int region_top = chat_y + 12;
+            const int region_bot = gy + gh - 20;   /* leave the hint line intact */
+            const int region_h   = region_bot - region_top;
+            int x = gx, y = region_top;
             gfx_puts_at(x, y, "AI: ", GEM_GREEN, GEM_WHITE);
             x += 32;
-            for (const char *p = txt; *p && y < gy + gh - 20; p++) {
-                if (*p == '\n' || x > gx + gw - 12) { x = gx; y += 8; if (*p == '\n') continue; }
+            for (const char *p = txt; *p; p++) {
+                if (*p == '\n' || x > gx + gw - 12) {
+                    x = gx;
+                    y += 8;
+                    if (*p == '\n') continue;
+                }
+                /* hit the bottom: scroll the chat region up and continue, so
+                 * the reply never gets cut off mid-stream (the [More] pager). */
+                if (y >= region_bot && region_h > 16) {
+                    int scroll = y - (region_top + 16);
+                    if (scroll > region_h) scroll = region_h;
+                    if (scroll < 1)       scroll = 1;
+                    gfx_puts_at(gx, region_bot - 8, "[More: any key]", GEM_DGRAY, GEM_WHITE);
+                    gfx_flush();
+                    int c; wait_key(&c);
+                    sound_click();
+                    gfx_scroll_region_up(gx, region_top, gw, region_h, scroll, GEM_WHITE);
+                    y -= scroll;
+                    gfx_flush();
+                }
                 if (*p >= 32 && *p < 127) gfx_glyph(x, y, *p, GEM_BLACK, GEM_WHITE);
                 x += 8;
             }

@@ -13,6 +13,7 @@
 static bool inited = false;
 static bool connected = false;
 int net_last_recv_len = 0;
+int net_last_err = 0;       /* lwIP err_t from the last err_cb (0 if none) */
 
 void net_poll(void) {
     if (inited) cyw43_arch_poll();
@@ -43,11 +44,21 @@ bool net_connect(const char *ssid, const char *pass, int timeout_ms) {
         sleep_ms(50);
     }
     connected = true;
+    /* Disable CYW43 power-save for the session. The default PM2 mode lets the
+     * radio sleep when there is no activity "for some time" -- which is exactly
+     * the long, silent window while a LAN LLM generates its reply (Ollama with
+     * stream:false sends nothing until the whole response is ready). PM2 sleep
+     * makes the AP drop the association mid-generation -> err_cb with no data
+     * received (the "connects but doesn't stay connected" symptom). */
+    if (inited) cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM);
     return true;
 }
 
 void net_disconnect(void) {
-    if (inited) cyw43_arch_wifi_connect_timeout_ms("", "", 0, 100); /* best-effort */
+    if (inited) {
+        cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+        cyw43_wifi_pm(&cyw43_state, CYW43_DEFAULT_PM);   /* restore default PM */
+    }
     connected = false;
 }
 
@@ -70,6 +81,7 @@ typedef struct {
     bool done;
     bool err;
     bool got_data;
+    bool connected;     /* connect_cb fired (server accepted the TCP connection) */
     int content_length;   /* from Content-Length header, -1 if unknown */
     int body_offset;      /* where body starts (after \r\n\r\n), -1 if not yet */
     ip_addr_t addr;
@@ -151,15 +163,22 @@ static err_t sent_cb(void *arg, struct tcp_pcb *pcb, u16_t len) {
 static err_t connect_cb(void *arg, struct tcp_pcb *pcb, err_t err) {
     http_t *h = arg;
     if (err != ERR_OK) { h->err = true; return ERR_OK; }
+    h->connected = true;
     tcp_sent(pcb, sent_cb);
     tcp_recv(pcb, recv_cb);
     sent_cb(arg, pcb, 0);
     return ERR_OK;
 }
 
+/* lwIP calls err_cb when the connection is torn down abnormally (RST, timeout,
+ * fatal error). IMPORTANT: in the raw API the pcb has already been freed by the
+ * time err_cb fires, so we must NOT touch it -- and we must clear it so the
+ * outer loop never calls tcp_abort() on the freed pcb (use-after-free). */
 static void err_cb(void *arg, err_t err) {
     http_t *h = arg;
     h->err = true; h->done = true;
+    h->pcb = NULL;          /* already freed by lwIP; do not abort again */
+    net_last_err = err;
 }
 
 /* error codes for diagnosis */
@@ -174,11 +193,14 @@ static void err_cb(void *arg, err_t err) {
 int net_http_post(const char *host, uint16_t port, const char *path,
                   const char *body, char *resp, int resp_max, int timeout_ms) {
     net_last_recv_len = 0;
+    net_last_err = 0;
     if (!connected) return NET_ERR_NOTCONN;
     resp[0] = 0;
 
     static http_t h;
     memset(&h, 0, sizeof h);
+    h.content_length = -1;   /* unknown until parse_headers finds the header */
+    h.body_offset = -1;       /* no header/body boundary seen yet */
     h.resp = resp; h.resp_max = resp_max;
 
     /* build request */

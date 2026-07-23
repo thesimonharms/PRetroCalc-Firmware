@@ -146,33 +146,40 @@ restart:;
         gfx_puts_at(pw_x + 4, pw_y + 2, b, COL_WHITE, COL_BLACK);
         gfx_flush();
 
+        /* input: drain queue quickly, no per-event sleeps that stall the frame */
         int c;
-        poll_key(&c, 14);
+        poll_key(&c, 8);
         if (c == KEY_ESC) return;
-        if (c == KEY_LEFT || c == 'a') { px -= 9; if (px < fx) px = fx; }
-        if (c == KEY_RIGHT || c == 'd') { px += 9; if (px > fx + fw - paddle_w) px = fx + fw - paddle_w; }
+        if (c == KEY_LEFT || c == 'a') { px -= 10; if (px < fx) px = fx; }
+        if (c == KEY_RIGHT || c == 'd') { px += 10; if (px > fx + fw - paddle_w) px = fx + fw - paddle_w; }
         int c2;
-        while (poll_key(&c2, 1)) {
-            if (c2 == KEY_LEFT) { px -= 9; if (px < fx) px = fx; }
-            if (c2 == KEY_RIGHT) { px += 9; if (px > fx + fw - paddle_w) px = fx + fw - paddle_w; }
-            if (c2 == KEY_ESC) return;
+        while (poll_key(&c2, 0)) {
+            if (c2 == KEY_LEFT) { px -= 10; if (px < fx) px = fx; }
+            else if (c2 == KEY_RIGHT) { px += 10; if (px > fx + fw - paddle_w) px = fx + fw - paddle_w; }
+            else if (c2 == KEY_ESC) return;
         }
 
         bx += bdx; by += bdy;
-        if (bx < fx + 3 || bx > fx + fw - 3) { bdx = -bdx; sound_beep(800, 10); }
-        if (by < fy + 2) { bdy = -bdy; sound_beep(800, 10); }
-        if (by > fb - 14 && by < fb - 4 && bx >= px && bx <= px + paddle_w && bdy > 0) {
+        if (bx < fx + 3) { bx = fx + 3; bdx = -bdx; sound_beep(800, 10); }
+        if (bx > fx + fw - 3) { bx = fx + fw - 3; bdx = -bdx; sound_beep(800, 10); }
+        if (by < fy + 2) { by = fy + 2; bdy = -bdy; sound_beep(800, 10); }
+        /* paddle: only bounce when moving down and crossing the paddle plane */
+        if (bdy > 0 && by >= fb - 12 && by <= fb - 2 && bx >= px - 2 && bx <= px + paddle_w + 2) {
+            by = fb - 12;                 /* clamp out of the paddle */
             bdy = -bdy;
-            bdx = (bx - (px + paddle_w / 2)) / 4;
-            if (bdx == 0) bdx = 1;
+            /* english: offset from paddle centre sets horizontal speed.
+             * left half -> negative (left), right half -> positive (right). */
+            bdx = (bx - (px + paddle_w / 2)) / 3;
+            if (bdx > 6) bdx = 6;
+            if (bdx < -6) bdx = -6;
             sound_beep(1000, 15);
         }
-        if (by > fb) {
+        if (by > fb + 4) {
             lives--; sound_beep(200, 250);
             if (lives == 0) break;
             bx = fx + fw/2; by = fb - 60; bdx = 2; bdy = -3;
         }
-        /* brick collision */
+        /* brick collision (ball moving up) */
         if (bdy < 0 && by >= fy && by < fy + rows * 11) {
             int r = (by - fy) / 11, cc = (bx - fx) / bw;
             if (r >= 0 && r < rows && cc >= 0 && cc < cols && bricks[r][cc]) {
@@ -180,7 +187,7 @@ restart:;
             }
         }
         int left = 0;
-        for (int r = 0; r < rows; r++) for (int c2 = 0; c2 < cols; c2++) left += bricks[r][c2];
+        for (int r = 0; r < rows; r++) for (int c3 = 0; c3 < cols; c3++) left += bricks[r][c3];
         if (left == 0) {
             gfx_puts_at(fx + fw/2 - 32, fy + 80, "YOU WIN!", COL_LGREEN, COL_BLACK);
             gfx_flush();
