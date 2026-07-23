@@ -30,8 +30,19 @@ bool net_init(void) {
 bool net_connect(const char *ssid, const char *pass, int timeout_ms) {
     if (!inited && !net_init()) return false;
     int r = cyw43_arch_wifi_connect_timeout_ms(ssid, pass, CYW43_AUTH_WPA2_AES_PSK, timeout_ms);
-    connected = (r == 0);
-    return connected;
+    if (r != 0) { connected = false; return false; }
+    /* wait for DHCP to assign an address (link up + IP != 0) */
+    absolute_time_t deadline = make_timeout_time_ms(8000);
+    for (;;) {
+        net_poll();
+        int link = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
+        uint32_t ip = cyw43_state.netif[CYW43_ITF_STA].ip_addr.addr;
+        if (link == CYW43_LINK_UP && ip != 0) break;
+        if (time_reached(deadline)) break;
+        sleep_ms(50);
+    }
+    connected = true;
+    return true;
 }
 
 void net_disconnect(void) {
@@ -113,9 +124,18 @@ static void err_cb(void *arg, err_t err) {
     h->err = true; h->done = true;
 }
 
+/* error codes for diagnosis */
+#define NET_OK          0
+#define NET_ERR_NOTCONN -1
+#define NET_ERR_BODY    -2
+#define NET_ERR_DNS     -3
+#define NET_ERR_PCB     -4
+#define NET_ERR_CONNECT -5
+#define NET_ERR_IO      -6
+
 int net_http_post(const char *host, uint16_t port, const char *path,
                   const char *body, char *resp, int resp_max, int timeout_ms) {
-    if (!connected) return -1;
+    if (!connected) return NET_ERR_NOTCONN;
     resp[0] = 0;
 
     static http_t h;
@@ -123,10 +143,10 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     h.resp = resp; h.resp_max = resp_max;
 
     /* build request */
-    static char req[1536];
+    static char req[2048];
     int blen = strlen(body);
     int hostlen = strlen(host);
-    if (blen + hostlen + 256 > (int)sizeof(req)) return -1;
+    if (blen + hostlen + 256 > (int)sizeof(req)) return NET_ERR_BODY;
     h.req_len = snprintf(req, sizeof req,
         "POST %s HTTP/1.0\r\nHost: %s\r\nContent-Type: application/json\r\n"
         "Content-Length: %d\r\nConnection: close\r\n\r\n%s",
@@ -140,31 +160,32 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     } else {
         err_t e = dns_gethostbyname(host, &addr, dns_cb, &h);
         if (e == ERR_OK) { h.addr = addr; h.dns_done = true; h.dns_ok = true; }
-        else if (e != ERR_INPROGRESS) return -1;
+        else if (e != ERR_INPROGRESS) return NET_ERR_DNS;
     }
 
     absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
     while (!h.dns_done && !time_reached(deadline)) { net_poll(); sleep_ms(2); }
-    if (!h.dns_ok) return -1;
+    if (!h.dns_ok) return NET_ERR_DNS;
 
     h.pcb = tcp_new();
-    if (!h.pcb) return -1;
+    if (!h.pcb) return NET_ERR_PCB;
     tcp_arg(h.pcb, &h);
     tcp_err(h.pcb, err_cb);
-    if (tcp_connect(h.pcb, &h.addr, port, connect_cb) != ERR_OK) { tcp_close(h.pcb); return -1; }
+    err_t ce = tcp_connect(h.pcb, &h.addr, port, connect_cb);
+    if (ce != ERR_OK) { tcp_close(h.pcb); return NET_ERR_CONNECT; }
 
     while (!h.done && !h.err && !time_reached(deadline)) { net_poll(); sleep_ms(2); }
     if (h.pcb) { tcp_abort(h.pcb); h.pcb = NULL; }
-    if (h.err || h.resp_len == 0) return -1;
+    if (h.err || h.resp_len == 0) return NET_ERR_IO;
     resp[h.resp_len] = 0;
     /* strip HTTP headers: body starts after the first blank line */
     char *body_start = strstr(resp, "\r\n\r\n");
     if (body_start) {
         body_start += 4;
-        int blen = h.resp_len - (body_start - resp);
-        memmove(resp, body_start, blen);
-        resp[blen] = 0;
-        return blen;
+        int bl = h.resp_len - (body_start - resp);
+        memmove(resp, body_start, bl);
+        resp[bl] = 0;
+        return bl;
     }
     return h.resp_len;
 }

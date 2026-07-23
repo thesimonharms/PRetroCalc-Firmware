@@ -197,7 +197,15 @@ void app_chat(void) {
         int rl = net_http_post(host, port, path, body, resp, sizeof resp, 120000);
         gfx_fill_rect(gx, chat_y + 12, gw, gh - (chat_y - gy) - 12, GEM_WHITE);
         if (rl < 0) {
-            gfx_puts_at(gx, chat_y + 12, "Request failed (host/path/server?)", GEM_GREEN, GEM_WHITE);
+            const char *why =
+                rl == -1 ? "not connected (WiFi dropped)" :
+                rl == -2 ? "request too big" :
+                rl == -3 ? "DNS resolve failed" :
+                rl == -4 ? "out of TCP pcbs" :
+                rl == -5 ? "TCP connect refused/unreachable" :
+                           "I/O error / empty reply";
+            char eb[64]; snprintf(eb, sizeof eb, "Err %d: %s", rl, why);
+            gfx_puts_at(gx, chat_y + 12, eb, GEM_GREEN, GEM_WHITE);
         } else {
             const char *txt = json_str(resp, "response");
             if (!txt) txt = json_str(resp, "content");
