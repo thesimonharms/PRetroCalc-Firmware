@@ -62,17 +62,27 @@ static int win_read_line(int y, const char *prompt, char *buf, int maxlen, bool 
     }
 }
 
-/* naive JSON string extractor: finds "key":"...": returns pointer into static buf */
+/* naive JSON string extractor: finds "key":"..." where the key appears as a
+ * real key (preceded by { or ,). Avoids matching the word inside string
+ * values (e.g. a reasoning model's "thinking" field mentioning "response"). */
 static const char *json_str(const char *json, const char *key) {
-    static char out[1024];
-    char pat[40];
+    static char out[4096];
+    char pat[48];
     snprintf(pat, sizeof pat, "\"%s\"", key);
-    const char *p = strstr(json, pat);
-    if (!p) return NULL;
-    p = strchr(p + strlen(pat), ':');
+    const char *p = json;
+    const char *found = NULL;
+    while ((p = strstr(p, pat)) != NULL) {
+        /* check the char before the match is { or , (a real key position) */
+        const char *q = p;
+        while (q > json && (q[-1] == ' ' || q[-1] == '\n' || q[-1] == '\t' || q[-1] == '\r')) q--;
+        if (q > json && (q[-1] == '{' || q[-1] == ',')) { found = p; break; }
+        p += strlen(pat);
+    }
+    if (!found) return NULL;
+    p = strchr(found + strlen(pat), ':');
     if (!p) return NULL;
     p++;
-    while (*p == ' ' || *p == '\t') p++;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
     if (*p != '"') return NULL;
     p++;
     int i = 0;
@@ -164,7 +174,7 @@ void app_chat(void) {
     int port = atoi(port_s);
     static char msg[256];
     static char body[512];
-    static char resp[4096];
+    static char resp[12288];   /* 9B models produce long replies; needs room */
     int chat_y = gy + 132;
 
     for (;;) {
@@ -184,7 +194,7 @@ void app_chat(void) {
         gfx_puts_at(gx, chat_y + 12, "Thinking...", GEM_DGRAY, GEM_WHITE);
         gfx_flush();
 
-        int rl = net_http_post(host, port, path, body, resp, sizeof resp, 20000);
+        int rl = net_http_post(host, port, path, body, resp, sizeof resp, 120000);
         gfx_fill_rect(gx, chat_y + 12, gw, gh - (chat_y - gy) - 12, GEM_WHITE);
         if (rl < 0) {
             gfx_puts_at(gx, chat_y + 12, "Request failed (host/path/server?)", GEM_GREEN, GEM_WHITE);

@@ -157,5 +157,14 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     if (h.pcb) { tcp_abort(h.pcb); h.pcb = NULL; }
     if (h.err || h.resp_len == 0) return -1;
     resp[h.resp_len] = 0;
+    /* strip HTTP headers: body starts after the first blank line */
+    char *body_start = strstr(resp, "\r\n\r\n");
+    if (body_start) {
+        body_start += 4;
+        int blen = h.resp_len - (body_start - resp);
+        memmove(resp, body_start, blen);
+        resp[blen] = 0;
+        return blen;
+    }
     return h.resp_len;
 }
