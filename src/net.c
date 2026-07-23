@@ -70,6 +70,8 @@ typedef struct {
     bool done;
     bool err;
     bool got_data;
+    int content_length;   /* from Content-Length header, -1 if unknown */
+    int body_offset;      /* where body starts (after \r\n\r\n), -1 if not yet */
     ip_addr_t addr;
     bool dns_done;
     bool dns_ok;
@@ -77,6 +79,36 @@ typedef struct {
     int req_len;
     int req_sent;
 } http_t;
+
+/* case-insensitive substring search (newlib lacks strcasestr) */
+static char *my_strcasestr(const char *hay, const char *needle) {
+    if (!*needle) return (char *)hay;
+    for (; *hay; hay++) {
+        const char *a = hay, *b = needle;
+        while (*a && *b && ((*a >= 'A' && *a <= 'Z' ? *a + 32 : *a) ==
+                            (*b >= 'A' && *b <= 'Z' ? *b + 32 : *b))) { a++; b++; }
+        if (!*b) return (char *)hay;
+    }
+    return NULL;
+}
+
+/* scan buffered response for end-of-headers and Content-Length */
+static void parse_headers(http_t *h) {
+    if (h->body_offset >= 0) return;
+    h->resp[h->resp_len] = 0;
+    char *be = strstr(h->resp, "\r\n\r\n");
+    if (!be) return;
+    h->body_offset = (be - h->resp) + 4;
+    h->content_length = -1;
+    char *cl = my_strcasestr(h->resp, "Content-Length:");
+    if (cl && cl < be) h->content_length = atoi(cl + 15);
+}
+
+/* true once the full body has arrived */
+static bool body_complete(http_t *h) {
+    if (h->body_offset < 0 || h->content_length < 0) return false;
+    return h->resp_len >= h->body_offset + h->content_length;
+}
 
 static void dns_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     http_t *h = arg;
@@ -95,10 +127,9 @@ static err_t recv_cb(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
     }
     tcp_recved(pcb, p->tot_len);
     pbuf_free(p);
-    /* HTTP/1.0 + Connection: close means body ends at FIN. But if we've got
-     * data and a complete JSON body, we can finish early without waiting
-     * for the server to close (some servers keep-alive despite our header). */
     if (h->resp_len > 0) h->got_data = true;
+    parse_headers(h);
+    if (body_complete(h)) h->done = true;      /* full body received; stop early */
     return ERR_OK;
 }
 
@@ -182,19 +213,14 @@ int net_http_post(const char *host, uint16_t port, const char *path,
     err_t ce = tcp_connect(h.pcb, &h.addr, port, connect_cb);
     if (ce != ERR_OK) { tcp_close(h.pcb); return NET_ERR_CONNECT; }
 
-    /* wait until: server closes (done), error, we have data + brief settle, or timeout */
-    absolute_time_t data_deadline = make_timeout_time_ms(0);
-    bool have_deadline = false;
-    while (!h.err && !time_reached(deadline)) {
+    /* wait until full body received (done), error, or timeout.
+     * done is set when: server closes cleanly OR body_complete(). */
+    while (!h.err && !h.done && !time_reached(deadline)) {
         net_poll();
-        if (h.done) break;                    /* clean close by server */
-        if (h.got_data && !have_deadline) {   /* got data; give it a moment for the rest */
-            data_deadline = make_timeout_time_ms(3000);
-            have_deadline = true;
-        }
-        if (have_deadline && time_reached(data_deadline)) break; /* settled */
         sleep_ms(2);
     }
+    /* if server closed without a Content-Length (chunked/HTTP1.0 close), we
+     * may still have a complete body; accept whatever arrived. */
     if (h.pcb) { tcp_abort(h.pcb); h.pcb = NULL; }
     net_last_recv_len = h.resp_len;
     if (h.err && h.resp_len == 0) return NET_ERR_IO;
