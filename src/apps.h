@@ -27,5 +27,6 @@ void app_breakout(void);
 void app_invaders(void);
 void app_life(void);
 void app_chat(void);
+void app_notes(void);
 
 #endif

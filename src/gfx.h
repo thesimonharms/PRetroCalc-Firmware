@@ -48,6 +48,17 @@ int  gfx_cursor_y(void);
 void gfx_set_color(uint8_t fg, uint8_t bg);
 uint8_t gfx_fg(void);
 void gfx_glyph(int x, int y, char ch, uint8_t fg, uint8_t bg);
+void gfx_glyph_bmp(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg);
+void gfx_glyph_bmp_ex(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg,
+                      bool bold, bool italic);
+/* bg == 0xFF → transparent (only set fg pixels) */
+void gfx_glyph_bmp_tr(int x, int y, const uint8_t *rows, uint8_t fg);
+/* Variable-size bitmap: row_bytes bytes/row, bit0 = left. transparent if bg==0xFF */
+void gfx_glyph_n(int x, int y, int w, int h, int row_bytes,
+                 const uint8_t *bits, uint8_t fg, uint8_t bg, bool bold);
+/* Scaled 8x8 glyph (integer zoom). bg == 0xFF → transparent. */
+void gfx_glyph_scale(int x, int y, char ch, int scale, uint8_t fg, uint8_t bg,
+                     bool bold, bool italic);
 void gfx_char(char ch, uint8_t fg, uint8_t bg);
 void gfx_puts_at(int x, int y, const char *s, uint8_t fg, uint8_t bg);
 void gfx_print(const char *s);

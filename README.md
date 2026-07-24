@@ -21,10 +21,10 @@ the SD card (an `AUTORUN.PS` on the card runs at boot, like `AUTOEXEC.BAT`).
 - **Games:** Snake, Breakout, Space Invaders, Conway's Game of Life
 - **WiFi/Networking:** CYW43 + lwIP (poll mode) with a minimal plain-HTTP
   client. The CHAT app talks to LAN LLM servers that don't need TLS —
-  Ollama (`/api/generate`), llama.cpp (`/completion`), or any
+  **Ollama**, **LM Studio** (OpenAI-compat on port 1234), llama.cpp, or any
   OpenAI-compatible `/v1/chat/completions` endpoint. Configure via
-  `CHAT.CFG` on the SD card (ssid, password, host, port, path, model), or
-  answer the prompts. HTTPS to public APIs is not supported (no TLS stack).
+  `CHAT.CFG` on the SD card, or use the on-device setup wizard (Ollama /
+  LM Studio / Other). HTTPS to public APIs is not supported (no TLS stack).
 - **PicoScript VM:** `let/print/if/while/for/sub/input` plus graphics
   (`pset/line/rect/fillrect/circle/text/color/flush`), `beep`, `sleep`,
   `rnd`, `key` — compiled to bytecode, not interpreted line-by-line
@@ -79,6 +79,75 @@ Hold **BOOTSEL** on the Pico, plug in USB, copy `build/pretrocalc.uf2` to the
 - **Terminal:** type `help`. Run scripts with `run STARS.PS`.
 - **SD card:** copy `sd-card/*.PS` to the card root. Write your own `.PS`
   files — see `sd-card/STARS.PS` for the language by example.
+- **LLM chat:** open CHAT. Needs WiFi + a LAN LLM server (no TLS). Keys inside
+  chat: ↑/↓/PgUp/PgDn scroll, Tab = show/hide thinking, **Ctrl+M** = pick model.
+
+### CHAT.CFG (SD card root)
+
+Plain text, one field per line:
+
+```
+YourWiFiSSID
+YourWiFiPassword
+192.168.1.50
+11434
+/api/generate
+llama3
+ollama
+```
+
+| Line | Meaning | Examples |
+|------|---------|----------|
+| 1 | WiFi SSID | `NETGEAR82` |
+| 2 | WiFi password | |
+| 3 | Server IP or hostname | `192.168.1.25` |
+| 4 | Port | `11434` (Ollama), `1234` (LM Studio) |
+| 5 | HTTP path | `/api/generate`, `/v1/chat/completions` |
+| 6 | Model name/id | `llama3`, or LM Studio's model id |
+| 7 | API type *(optional)* | `ollama`, `lmstudio`, `openai`, `llamacpp` |
+
+- **`lmstudio` and `openai` are synonyms** (same OpenAI-compat request shape).
+- If line 7 is omitted, the API is **auto-detected** from path/port
+  (`/v1/chat/completions` or port `1234` → OpenAI/LM Studio;
+  `/api/generate` or port `11434` → Ollama;
+  `/completion` or port `8080` → llama.cpp).
+- If `CHAT.CFG` is missing, the on-device wizard asks **1=Ollama / 2=LM Studio /
+  3=Other** and writes the file for next time.
+
+#### LM Studio checklist
+
+1. In LM Studio → **Developer** → start the server.
+2. Enable **Serve on Local Network** (not localhost-only).
+3. Load a model (or enable JIT loading).
+4. Allow Windows firewall inbound on port **1234** if prompted.
+5. Put the PC's LAN IP in `CHAT.CFG` with:
+
+```
+YourSSID
+YourPassword
+192.168.1.50
+1234
+/v1/chat/completions
+my-model-id
+lmstudio
+```
+
+6. On the PicoCalc: open CHAT → connect → **Ctrl+M** to pick a model if needed.
+
+#### Ollama checklist
+
+1. Expose Ollama on the LAN (`OLLAMA_HOST=0.0.0.0` or the desktop app's expose toggle).
+2. `CHAT.CFG` example:
+
+```
+YourSSID
+YourPassword
+192.168.1.50
+11434
+/api/generate
+llama3
+ollama
+```
 
 ## PicoScript quick reference
 

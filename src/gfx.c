@@ -198,23 +198,104 @@ int  gfx_cursor_y(void) { return cursor_y; }
 void gfx_set_color(uint8_t fg, uint8_t bg) { cursor_fg = fg; cursor_bg = bg; }
 uint8_t gfx_fg(void) { return cursor_fg; }
 
-void gfx_glyph(int x, int y, char ch, uint8_t fg, uint8_t bg) {
-    if (x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
-    const uint8_t *g = &font8x8[(uint8_t)ch * 8];
+void gfx_glyph_bmp(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg) {
+    gfx_glyph_bmp_ex(x, y, rows, fg, bg, false, false);
+}
+
+void gfx_glyph_bmp_ex(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg,
+                      bool bold, bool italic) {
+    if (!rows || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
     uint8_t *dst = &gfx_fb[y * LCD_WIDTH + x];
     for (int row = 0; row < FONT_H; row++) {
-        uint8_t bits = g[row];
-        dst[0] = (bits & 0x01) ? fg : bg;
-        dst[1] = (bits & 0x02) ? fg : bg;
-        dst[2] = (bits & 0x04) ? fg : bg;
-        dst[3] = (bits & 0x08) ? fg : bg;
-        dst[4] = (bits & 0x10) ? fg : bg;
-        dst[5] = (bits & 0x20) ? fg : bg;
-        dst[6] = (bits & 0x40) ? fg : bg;
-        dst[7] = (bits & 0x80) ? fg : bg;
+        uint8_t bits = rows[row];
+        if (bold) bits |= (uint8_t)(bits << 1);
+        int shift = italic ? (row / 3) : 0;
+        for (int col = 0; col < FONT_W; col++) {
+            int src = col - shift;
+            uint8_t on = 0;
+            if (src >= 0 && src < 8) on = (bits >> src) & 1;
+            dst[col] = on ? fg : bg;
+        }
         dst += LCD_WIDTH;
     }
     mark_dirty(x, y); mark_dirty(x + FONT_W - 1, y + FONT_H - 1);
+}
+
+void gfx_glyph_bmp_tr(int x, int y, const uint8_t *rows, uint8_t fg) {
+    if (!rows || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
+    uint8_t *dst = &gfx_fb[y * LCD_WIDTH + x];
+    for (int row = 0; row < FONT_H; row++) {
+        uint8_t bits = rows[row];
+        for (int col = 0; col < FONT_W; col++) {
+            if ((bits >> col) & 1) dst[col] = fg;
+        }
+        dst += LCD_WIDTH;
+    }
+    mark_dirty(x, y); mark_dirty(x + FONT_W - 1, y + FONT_H - 1);
+}
+
+void gfx_glyph_n(int x, int y, int w, int h, int row_bytes,
+                 const uint8_t *bits, uint8_t fg, uint8_t bg, bool bold) {
+    if (!bits || w <= 0 || h <= 0) return;
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    bool tr = (bg == 0xFF);
+    int x1 = x + w; if (x1 > LCD_WIDTH) x1 = LCD_WIDTH;
+    int y1 = y + h; if (y1 > LCD_HEIGHT) y1 = LCD_HEIGHT;
+    for (int row = 0; row < h && (y + row) < y1; row++) {
+        const uint8_t *rp = bits + row * row_bytes;
+        uint8_t *dst = &gfx_fb[(y + row) * LCD_WIDTH + x];
+        for (int col = 0; col < w && (x + col) < x1; col++) {
+            int bi = col >> 3;
+            int bp = col & 7;
+            uint8_t on = 0;
+            if (bi < row_bytes) on = (rp[bi] >> bp) & 1;
+            if (bold && col + 1 < w) {
+                int bi2 = (col + 1) >> 3, bp2 = (col + 1) & 7;
+                if (bi2 < row_bytes) on |= (rp[bi2] >> bp2) & 1;
+            }
+            if (on) dst[col] = fg;
+            else if (!tr) dst[col] = bg;
+        }
+    }
+    mark_dirty(x, y);
+    mark_dirty(x1 - 1, y1 - 1);
+}
+
+void gfx_glyph_scale(int x, int y, char ch, int scale, uint8_t fg, uint8_t bg,
+                     bool bold, bool italic) {
+    if (scale < 1) scale = 1;
+    bool tr = (bg == 0xFF);
+    const uint8_t *g = &font8x8[(uint8_t)ch * 8];
+    for (int row = 0; row < FONT_H; row++) {
+        uint8_t bits = g[row];
+        if (bold) bits |= (uint8_t)(bits << 1);
+        int shift = italic ? ((FONT_H - 1 - row) / 3) : 0;
+        for (int col = 0; col < FONT_W; col++) {
+            int src = col - shift;
+            uint8_t on = (src >= 0 && src < FONT_W) ? (uint8_t)((bits >> src) & 1) : 0;
+            int px = x + col * scale;
+            int py = y + row * scale;
+            for (int dy = 0; dy < scale; dy++) {
+                int yy = py + dy;
+                if (yy < 0 || yy >= LCD_HEIGHT) continue;
+                for (int dx = 0; dx < scale; dx++) {
+                    int xx = px + dx;
+                    if (xx < 0 || xx >= LCD_WIDTH) continue;
+                    if (on) gfx_fb[yy * LCD_WIDTH + xx] = fg;
+                    else if (!tr) gfx_fb[yy * LCD_WIDTH + xx] = bg;
+                }
+            }
+        }
+    }
+    mark_dirty(x, y);
+    int x1 = x + FONT_W * scale - 1, y1 = y + FONT_H * scale - 1;
+    if (x1 >= LCD_WIDTH) x1 = LCD_WIDTH - 1;
+    if (y1 >= LCD_HEIGHT) y1 = LCD_HEIGHT - 1;
+    mark_dirty(x1, y1);
+}
+
+void gfx_glyph(int x, int y, char ch, uint8_t fg, uint8_t bg) {
+    gfx_glyph_bmp(x, y, &font8x8[(uint8_t)ch * 8], fg, bg);
 }
 
 void gfx_char(char ch, uint8_t fg, uint8_t bg) {

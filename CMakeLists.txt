@@ -16,6 +16,7 @@ add_executable(pretrocalc
     src/main.c
     src/gfx.c
     src/font.c
+    src/font_jawa.c
     src/keyboard.c
     src/sound.c
     src/os.c
@@ -25,6 +26,7 @@ add_executable(pretrocalc
     src/app_terminal.c
     src/app_util.c
     src/app_games.c
+    src/app_notes.c
     src/net.c
     src/app_chat.c
 )

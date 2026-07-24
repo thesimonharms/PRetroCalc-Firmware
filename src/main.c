@@ -18,6 +18,7 @@ const app_t apps[] = {
     {"TERM",    "Command shell + PicoScript", app_terminal, COL_LGREEN},
     {"FILES",   "SD card file manager",       app_files,    COL_CYAN},
     {"EDIT",    "Text editor",                app_editor,   COL_AMBER},
+    {"NOTES",   "Markdown + Aksara Jawa",     app_notes,    COL_YELLOW},
     {"CALC",    "Calculator",                 app_calc,     COL_WHITE},
     {"CHAT",    "LLM chat over WiFi",         app_chat,     COL_CYAN},
     {"SNAKE",   "Classic snake game",         app_snake,    COL_GREEN},
