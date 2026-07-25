@@ -23,6 +23,10 @@ static uint8_t cursor_fg = COL_WHITE, cursor_bg = COL_BLACK;
 static int dirty_x0 = LCD_WIDTH, dirty_y0 = LCD_HEIGHT, dirty_x1 = -1, dirty_y1 = -1;
 
 static void mark_dirty(int x, int y) {
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x >= LCD_WIDTH) x = LCD_WIDTH - 1;
+    if (y >= LCD_HEIGHT) y = LCD_HEIGHT - 1;
     if (x < dirty_x0) dirty_x0 = x;
     if (x > dirty_x1) dirty_x1 = x;
     if (y < dirty_y0) dirty_y0 = y;
@@ -204,7 +208,7 @@ void gfx_glyph_bmp(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg) {
 
 void gfx_glyph_bmp_ex(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg,
                       bool bold, bool italic) {
-    if (!rows || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
+    if (!rows || x < 0 || y < 0 || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
     uint8_t *dst = &gfx_fb[y * LCD_WIDTH + x];
     for (int row = 0; row < FONT_H; row++) {
         uint8_t bits = rows[row];
@@ -222,7 +226,7 @@ void gfx_glyph_bmp_ex(int x, int y, const uint8_t *rows, uint8_t fg, uint8_t bg,
 }
 
 void gfx_glyph_bmp_tr(int x, int y, const uint8_t *rows, uint8_t fg) {
-    if (!rows || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
+    if (!rows || x < 0 || y < 0 || x > LCD_WIDTH - FONT_W || y > LCD_HEIGHT - FONT_H) return;
     uint8_t *dst = &gfx_fb[y * LCD_WIDTH + x];
     for (int row = 0; row < FONT_H; row++) {
         uint8_t bits = rows[row];
@@ -238,13 +242,20 @@ void gfx_glyph_n(int x, int y, int w, int h, int row_bytes,
                  const uint8_t *bits, uint8_t fg, uint8_t bg, bool bold) {
     if (!bits || w <= 0 || h <= 0) return;
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    if (x + w <= 0 || y + h <= 0) return;
     bool tr = (bg == 0xFF);
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
     int x1 = x + w; if (x1 > LCD_WIDTH) x1 = LCD_WIDTH;
     int y1 = y + h; if (y1 > LCD_HEIGHT) y1 = LCD_HEIGHT;
-    for (int row = 0; row < h && (y + row) < y1; row++) {
+    for (int row = 0; row < h; row++) {
+        int yy = y + row;
+        if (yy < y0 || yy >= y1) continue;
         const uint8_t *rp = bits + row * row_bytes;
-        uint8_t *dst = &gfx_fb[(y + row) * LCD_WIDTH + x];
-        for (int col = 0; col < w && (x + col) < x1; col++) {
+        uint8_t *dst = &gfx_fb[yy * LCD_WIDTH];
+        for (int col = 0; col < w; col++) {
+            int xx = x + col;
+            if (xx < x0 || xx >= x1) continue;
             int bi = col >> 3;
             int bp = col & 7;
             uint8_t on = 0;
@@ -253,11 +264,11 @@ void gfx_glyph_n(int x, int y, int w, int h, int row_bytes,
                 int bi2 = (col + 1) >> 3, bp2 = (col + 1) & 7;
                 if (bi2 < row_bytes) on |= (rp[bi2] >> bp2) & 1;
             }
-            if (on) dst[col] = fg;
-            else if (!tr) dst[col] = bg;
+            if (on) dst[xx] = fg;
+            else if (!tr) dst[xx] = bg;
         }
     }
-    mark_dirty(x, y);
+    mark_dirty(x0, y0);
     mark_dirty(x1 - 1, y1 - 1);
 }
 
@@ -305,8 +316,10 @@ void gfx_char(char ch, uint8_t fg, uint8_t bg) {
 }
 
 void gfx_puts_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
+    if (y < 0 || y > LCD_HEIGHT - FONT_H) return;
     while (*s && x <= LCD_WIDTH - FONT_W) {
-        gfx_glyph(x, y, *s++, fg, bg);
+        if (x >= 0) gfx_glyph(x, y, *s, fg, bg);
+        s++;
         x += FONT_W;
     }
 }
@@ -378,7 +391,15 @@ static void __not_in_flash_func(push_rect)(int x0, int y0, int x1, int y1) {
 
 void gfx_flush(void) {
     if (dirty_x1 < 0) return;
-    /* copy dirty rect from draw buffer to display buffer, then push */
+    /* Clamp dirty rect to framebuffer — hscroll can dirty partial glyphs. */
+    if (dirty_x0 < 0) dirty_x0 = 0;
+    if (dirty_y0 < 0) dirty_y0 = 0;
+    if (dirty_x1 >= LCD_WIDTH) dirty_x1 = LCD_WIDTH - 1;
+    if (dirty_y1 >= LCD_HEIGHT) dirty_y1 = LCD_HEIGHT - 1;
+    if (dirty_x1 < dirty_x0 || dirty_y1 < dirty_y0) {
+        dirty_x0 = LCD_WIDTH; dirty_y0 = LCD_HEIGHT; dirty_x1 = -1; dirty_y1 = -1;
+        return;
+    }
     int w = dirty_x1 - dirty_x0 + 1;
     for (int y = dirty_y0; y <= dirty_y1; y++)
         memcpy(&gfx_disp[y * LCD_WIDTH + dirty_x0],
@@ -394,8 +415,13 @@ void gfx_flush_full(void) {
 
 /* vertical scroll of the whole framebuffer by n pixels (for terminal) */
 void gfx_scroll_up(int px, uint8_t fill) {
-    memmove(gfx_fb, gfx_fb + px * LCD_WIDTH, (LCD_HEIGHT - px) * LCD_WIDTH);
-    memset(gfx_fb + (LCD_HEIGHT - px) * LCD_WIDTH, fill, px * LCD_WIDTH);
+    if (px <= 0) return;
+    if (px >= LCD_HEIGHT) {
+        memset(gfx_fb, fill, sizeof(gfx_fb));
+    } else {
+        memmove(gfx_fb, gfx_fb + px * LCD_WIDTH, (LCD_HEIGHT - px) * LCD_WIDTH);
+        memset(gfx_fb + (LCD_HEIGHT - px) * LCD_WIDTH, fill, px * LCD_WIDTH);
+    }
     dirty_x0 = 0; dirty_y0 = 0; dirty_x1 = LCD_WIDTH - 1; dirty_y1 = LCD_HEIGHT - 1;
 }
 
@@ -404,18 +430,21 @@ void gfx_scroll_up(int px, uint8_t fill) {
  * the fill colour). Used to keep scrolling text inside a window without
  * clobbering the rest of the screen. */
 void gfx_scroll_region_up(int x, int y, int w, int h, int px, uint8_t fill) {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+    if (w <= 0 || h <= 0) return;
     if (px < 0) px = 0;
-    if (px >= h) px = h;
+    if (px > h) px = h;
     if (px > 0) {
         for (int r = 0; r < h - px; r++)
             memmove(&gfx_fb[(y + r) * LCD_WIDTH + x],
                     &gfx_fb[(y + r + px) * LCD_WIDTH + x],
-                    w);
+                    (size_t)w);
     }
     for (int r = h - px; r < h; r++)
-        memset(&gfx_fb[(y + r) * LCD_WIDTH + x], fill, w);
-    if (x < dirty_x0) dirty_x0 = x;
-    if (y < dirty_y0) dirty_y0 = y;
-    if (x + w - 1 > dirty_x1) dirty_x1 = x + w - 1;
-    if (y + h - 1 > dirty_y1) dirty_y1 = y + h - 1;
+        memset(&gfx_fb[(y + r) * LCD_WIDTH + x], fill, (size_t)w);
+    mark_dirty(x, y);
+    mark_dirty(x + w - 1, y + h - 1);
 }

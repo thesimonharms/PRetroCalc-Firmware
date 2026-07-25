@@ -4,24 +4,36 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Javanese Unicode block U+A980..U+A9DF — 64×64 em-aligned bitmaps.
- * Each glyph: 64 rows × 8 bytes (bit0 = leftmost pixel).
- * Combining marks share the same em box so they stack over base aksara. */
+/* Javanese Unicode block U+A980..U+A9DF — dual 48×48 / 64×64 em-aligned
+ * bitmaps (bit0 = leftmost). Combining marks share the em box so they stack
+ * over base aksara. Pasangan are real OpenType .pas forms (not scaled bases).
+ * Call font_jawa_set_px(48|64) to switch at runtime. */
 #define JAWA_CP_MIN 0xA980u
 #define JAWA_CP_MAX 0xA9DFu
 #define JAWA_COUNT  (JAWA_CP_MAX - JAWA_CP_MIN + 1)
-#define JAWA_W      64
-#define JAWA_H      64
-#define JAWA_ROW_BYTES 8
-#define JAWA_BYTES  (JAWA_H * JAWA_ROW_BYTES)
 
-extern const uint8_t font_jawa[JAWA_COUNT][JAWA_BYTES];
-/* Per-glyph advance: 0 for combining marks, ink width + bearing for bases. */
-extern const uint8_t font_jawa_adv[JAWA_COUNT];
+/* Active metrics — always use these (not compile-time constants). */
+int  font_jawa_px(void);          /* 48 or 64 */
+int  font_jawa_w(void);
+int  font_jawa_h(void);
+int  font_jawa_row_bytes(void);
+void font_jawa_set_px(int px);    /* clamps to 48 or 64 */
+
+/* Pasangan placement: blit pasangan bitmap at base_y + dy; reserve `extra`
+ * pixels of line descent so the next line clears the stack. */
+int  font_jawa_pasangan_dy(void);
+int  font_jawa_pasangan_extra(void);
 
 const uint8_t *font_jawa_glyph(uint32_t cp);
+const uint8_t *font_jawa_pasangan(uint32_t cp); /* NULL if no pasangan form */
+/* Below vowel form for pasangan clusters (u.ns.pas etc.); NULL if none. */
+const uint8_t *font_jawa_pas_below(uint32_t cp);
 bool font_jawa_is_mark(uint32_t cp);
+bool font_jawa_is_below_vowel(uint32_t cp); /* suku / suku mendut / keret */
+bool font_jawa_is_medial(uint32_t cp);      /* pengkal / cakra */
+bool font_jawa_is_below_mark(uint32_t cp);  /* vowel | medial */
 bool font_jawa_is_base(uint32_t cp);
+bool font_jawa_can_pasangan(uint32_t cp);
 int  font_jawa_advance(uint32_t cp);
 
 #endif
