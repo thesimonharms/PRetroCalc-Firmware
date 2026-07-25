@@ -133,7 +133,7 @@ static uint32_t jawa_map_key(int c, bool shift) {
         case '0': return 0xA982; /* layar */
         case '-': return 0xA983; /* wignyan */
         case '=': return 0xA9C0; /* pangkon */
-        /* carakan row 1 — lowercase only; uppercase is murda via shift layer */
+        /* carakan row 1 — lowercase only; uppercase is murda via Alt layer */
         case 'q': return 0xA9B2; /* ha */
         case 'w': return 0xA9A4; /* na */
         case 'e': return 0xA995; /* ca */
@@ -161,16 +161,16 @@ static uint32_t jawa_map_key(int c, bool shift) {
         case 'c': return 0xA988; /* U */
         case 'v': return 0xA98C; /* E */
         case 'b': return 0xA98E; /* O */
-        case 'n': return 0xA9CB; /* pada adeg */
-        case 'm': return 0xA9CC; /* adeg adeg */
+        case 'n': return 0xA9CA; /* pada adeg */
+        case 'm': return 0xA9CB; /* pada adeg-adeg */
         case ',': return 0xA9C8; /* lingsa */
         case '.': return 0xA9C9; /* lungsi */
-        case '/': return 0xA9CF; /* rangkap */
+        case '/': return 0xA9CF; /* pangrangkep */
         case ' ': return ' ';
         default: return 0;
         }
     }
-    /* Shift layer: murda / mahaprana / digits / extra */
+    /* Shift layer: murda / mahaprana / digits / extra (also used by Alt+letter) */
     switch (c) {
     case '1': return 0xA9D1;
     case '2': return 0xA9D2;
@@ -209,12 +209,41 @@ static uint32_t jawa_map_key(int c, bool shift) {
     case 'c': return 0xA989; /* pa cerek */
     case 'v': return 0xA98D; /* ai */
     case 'b': return 0xA98A; /* nga lelet */
-    case 'n': return 0xA9C1;
-    case 'm': return 0xA9C2;
+    case 'n': return 0xA9C1; /* left rerenggan */
+    case 'm': return 0xA9C2; /* right rerenggan */
     case ',': return 0xA9C7; /* pangkat */
     case '.': return 0xA9C6; /* windu */
-    case '/': return 0xA9CD; /* piseleh */
+    case '/': return 0xA9CC; /* piseleh */
     case ' ': return ' ';
+    default: return 0;
+    }
+}
+
+/* Alt(+Shift) extras — completes the Unicode block for typing. */
+static uint32_t jawa_map_alt(int c, bool shift) {
+    if (shift) {
+        switch (c) {
+        case 't': return 0xA990; /* ka sasak */
+        case 'i': return 0xA9B0; /* sa mahaprana */
+        case 'b': return 0xA98B; /* nga lelet raswadi */
+        case '-': return 0xA9DE; /* tirta tumetes */
+        case '=': return 0xA9DF; /* isukki tunggak */
+        default: return 0;
+        }
+    }
+    switch (c) {
+    case '1': return 0xA9B7; /* wulu melik */
+    case '2': return 0xA9B9; /* suku mendut */
+    case '3': return 0xA9BB; /* dirga mure */
+    case '4': return 0xA9B5; /* tolong */
+    case '5': return 0xA9C3; /* pada andap */
+    case '6': return 0xA9C4; /* pada madya */
+    case '7': return 0xA9C5; /* pada luhur */
+    case '8': return 0xA9CD; /* turned piseleh */
+    case '0': return 0xA9CA; /* pada adeg (also on N) */
+    case ',': return 0xA9C3; /* pada andap */
+    case '.': return 0xA9C4; /* pada madya */
+    case '/': return 0xA9C5; /* pada luhur */
     default: return 0;
     }
 }
@@ -297,7 +326,7 @@ static int cp_advance(uint32_t cp) {
 
 /* Latin-only lines stay tight; any Jawa on the line → full stack box. */
 static int line_height_for(int style) {
-    int h = (style & STYLE_JAWA) ? (JAWA_H + 4) : (LATIN_H + 2);
+    int h = (style & STYLE_JAWA) ? (font_jawa_h() + 4) : (LATIN_H + 2);
     if (style & STYLE_H1) h += 8;
     else if (style & STYLE_H2) h += 4;
     return h;
@@ -319,44 +348,34 @@ static bool line_has_jawa(const char *s, int len) {
 static void draw_jawa_glyph(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, bool bold) {
     const uint8_t *g = font_jawa_glyph(cp);
     if (!g) return;
-    /* Always transparent bg so advance-based spacing isn't covered by a 64px box */
+    int jw = font_jawa_w(), jh = font_jawa_h(), jrb = font_jawa_row_bytes();
+    /* Always transparent bg so advance-based spacing isn't covered by a full em box */
     if (bg != 0xFF && bg != GEM_WHITE)
-        gfx_fill_rect(x, y, JAWA_W, JAWA_H, bg);
-    gfx_glyph_n(x, y, JAWA_W, JAWA_H, JAWA_ROW_BYTES, g, fg, 0xFF, bold);
+        gfx_fill_rect(x, y, jw, jh, bg);
+    gfx_glyph_n(x, y, jw, jh, jrb, g, fg, 0xFF, bold);
 }
 
-/* Pasangan: half-size consonant drawn in the lower half of the base cell. */
+/* Pasangan: real OpenType .pas glyph, same origin as base (ink lives in the
+ * lower half of the em — do NOT half-scale nglegena, and do NOT lift it up
+ * into the base body). */
 static void draw_jawa_pasangan(int x, int y, uint32_t cp, uint8_t fg) {
-    const uint8_t *g = font_jawa_glyph(cp);
+    const uint8_t *g = font_jawa_pasangan(cp);
     if (!g) return;
-    /* 64→32 nearest-neighbor into bottom-center of the em box */
-    enum { PW = 32, PH = 32, PRB = 4 };
-    uint8_t half[PH * PRB];
-    memset(half, 0, sizeof half);
-    for (int dy = 0; dy < PH; dy++) {
-        int sy = dy * 2;
-        for (int dx = 0; dx < PW; dx++) {
-            int sx = dx * 2;
-            uint8_t on = (g[sy * JAWA_ROW_BYTES + (sx >> 3)] >> (sx & 7)) & 1;
-            /* also OR neighbor for a bit more body at small size */
-            if (!on && sx + 1 < JAWA_W)
-                on = (g[sy * JAWA_ROW_BYTES + ((sx + 1) >> 3)] >> ((sx + 1) & 7)) & 1;
-            if (on) half[dy * PRB + (dx >> 3)] |= (uint8_t)(1u << (dx & 7));
-        }
-    }
-    int ox = x + (JAWA_W - PW) / 2;
-    int oy = y + JAWA_H - PH - 2;
-    gfx_glyph_n(ox, oy, PW, PH, PRB, half, fg, 0xFF, false);
+    int jw = font_jawa_w(), jh = font_jawa_h(), jrb = font_jawa_row_bytes();
+    gfx_glyph_n(x, y, jw, jh, jrb, g, fg, 0xFF, false);
 }
 
-/* True if cp is a carakan consonant that can form pasangan. */
+/* Below vowel attached to pasangan (u.ns.pas) — same em origin as base/pas. */
+static void draw_jawa_pas_below(int x, int y, uint32_t cp, uint8_t fg) {
+    const uint8_t *g = font_jawa_pas_below(cp);
+    if (!g) return;
+    int jw = font_jawa_w(), jh = font_jawa_h(), jrb = font_jawa_row_bytes();
+    gfx_glyph_n(x, y, jw, jh, jrb, g, fg, 0xFF, false);
+}
+
+/* True if cp has a pasangan form (carakan / murda consonants). */
 static bool jawa_can_pasangan(uint32_t cp) {
-    if (!font_jawa_is_base(cp)) return false;
-    /* Independent vowels and digits don't take pasangan form */
-    if (cp >= 0xA984 && cp <= 0xA98E) return false; /* A I U E O etc */
-    if (cp >= 0xA9D0 && cp <= 0xA9D9) return false;
-    if (cp >= 0xA9C1) return false; /* punctuation */
-    return true;
+    return font_jawa_can_pasangan(cp);
 }
 
 static void draw_cp(int x, int y, uint32_t cp, uint8_t fg, uint8_t bg, int style, int lh) {
@@ -410,6 +429,27 @@ static int find_stack_base(void) {
     return -1;
 }
 
+/* True if a pasangan already shares this stack origin. */
+static bool stack_has_pasangan(int x, int y) {
+    /* Match by (x,y) only — do NOT stop at newlines. A backward scan that
+     * breaks on '\\n' fails whenever any later line exists in nt_cells, which
+     * made suku skip the under-pasangan shift and sit to the right. */
+    for (int i = 0; i < nt_ncells; i++) {
+        if (nt_cells[i].x == x && nt_cells[i].y == y &&
+            (nt_cells[i].style & STYLE_PASANGAN))
+            return true;
+    }
+    return false;
+}
+
+/* Raise stored line-box height for every cell on the current visual line. */
+static void bump_line_lh(int y, int new_lh) {
+    for (int i = 0; i < nt_ncells; i++) {
+        if (nt_cells[i].y == y && nt_cells[i].lh < new_lh)
+            nt_cells[i].lh = (uint8_t)new_lh;
+    }
+}
+
 /* Was the most recently emitted visible mark a pangkon on this line? */
 static bool last_cell_is_pangkon(void) {
     for (int i = nt_ncells - 1; i >= 0; i--) {
@@ -427,6 +467,43 @@ static void emit_cell(int off, int x, int y, uint32_t cp, int style, int adv, in
         (uint8_t)style, (uint8_t)adv, (uint8_t)lh
     };
     if (x + adv > nt_content_max_x) nt_content_max_x = x + adv;
+}
+
+/* Emit pasangan under base if legal; returns true if consumed. */
+static bool try_emit_pasangan(int pos, uint32_t cp, int style, int *lh) {
+    if (!jawa_can_pasangan(cp) || !last_cell_is_pangkon()) return false;
+    int bi = find_stack_base();
+    if (bi < 0) return false;
+    int bx = nt_cells[bi].x, by = nt_cells[bi].y;
+    /* One pasangan per base — further consonants start a new syllable. */
+    if (stack_has_pasangan(bx, by)) return false;
+    if (nt_cur == pos) nt_cur_cell = nt_ncells;
+    int plh = font_jawa_h() + 4;
+    if (plh > *lh) {
+        *lh = plh;
+        bump_line_lh(by, plh);
+    }
+    emit_cell(pos, bx, by, cp, style | STYLE_PASANGAN, 0, *lh);
+    return true;
+}
+
+/* Emit sandhangan on stack base if legal; returns true if consumed. */
+static bool try_emit_mark(int pos, uint32_t cp, int style, int *lh) {
+    if (!font_jawa_is_mark(cp)) return false;
+    int bi = find_stack_base();
+    if (bi < 0) return false;
+    if (nt_cur == pos) nt_cur_cell = nt_ncells;
+    int bx = nt_cells[bi].x, by = nt_cells[bi].y;
+    int mlh = *lh;
+    if (font_jawa_is_below_vowel(cp) && stack_has_pasangan(bx, by)) {
+        mlh = font_jawa_h() + 4 + font_jawa_pasangan_extra();
+        if (mlh > *lh) {
+            *lh = mlh;
+            bump_line_lh(by, mlh);
+        }
+    }
+    emit_cell(pos, bx, by, cp, style, 0, mlh);
+    return true;
 }
 
 static int match_prefix(const char *s, int len, const char *p) {
@@ -562,25 +639,9 @@ static void layout_note(int scroll_line, int max_y) {
                     while (pos < end && nt_ncells < NT_CELLS) {
                         uint32_t cp; int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
                         int adv = cp_advance(cp);
+                        if (try_emit_mark(pos, cp, st, &lh)) { pos += n; continue; }
+                        if (try_emit_pasangan(pos, cp, st, &lh)) { pos += n; continue; }
                         if (nt_cur == pos) nt_cur_cell = nt_ncells;
-                        if (font_jawa_is_mark(cp)) {
-                            int bi = find_stack_base();
-                            if (bi >= 0) {
-                                emit_cell(pos, nt_cells[bi].x, nt_cells[bi].y, cp, st, 0, lh);
-                                pos += n;
-                                continue;
-                            }
-                        }
-                        /* pasangan: consonant after pangkon stacks under previous base */
-                        if (jawa_can_pasangan(cp) && last_cell_is_pangkon()) {
-                            int bi = find_stack_base();
-                            if (bi >= 0) {
-                                emit_cell(pos, nt_cells[bi].x, nt_cells[bi].y, cp,
-                                          st | STYLE_PASANGAN, 0, lh);
-                                pos += n;
-                                continue;
-                            }
-                        }
                         if (adv) x = place_adv(x, cp, &prev_cls);
                         emit_cell(pos, x, y, cp, st, adv, lh);
                         x += adv;
@@ -605,6 +666,8 @@ static void layout_note(int scroll_line, int max_y) {
                     while (pos < end && nt_ncells < NT_CELLS) {
                         uint32_t cp; int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
                         int adv = cp_advance(cp);
+                        if (try_emit_mark(pos, cp, st, &lh)) { pos += n; continue; }
+                        if (try_emit_pasangan(pos, cp, st, &lh)) { pos += n; continue; }
                         if (nt_cur == pos) nt_cur_cell = nt_ncells;
                         if (adv) x = place_adv(x, cp, &prev_cls);
                         emit_cell(pos, x, y, cp, st, adv, lh);
@@ -622,29 +685,13 @@ static void layout_note(int scroll_line, int max_y) {
         int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
         int adv = cp_advance(cp);
 
-        /* Sandhangan stack onto the previous base aksara (same cell origin). */
-        if (font_jawa_is_mark(cp)) {
-            int bi = find_stack_base();
-            if (bi >= 0) {
-                if (nt_cur == pos) nt_cur_cell = nt_ncells;
-                emit_cell(pos, nt_cells[bi].x, nt_cells[bi].y, cp, line_style, 0, lh);
-                pos += n;
-                continue;
-            }
-            adv = font_jawa_advance(0xA98F); /* orphan mark: KA-width placeholder */
-            if (!adv) adv = JAWA_W / 2;
-        }
+        if (try_emit_mark(pos, cp, line_style, &lh)) { pos += n; continue; }
+        if (try_emit_pasangan(pos, cp, line_style, &lh)) { pos += n; continue; }
 
-        /* Pasangan: C1 + ꧀ + C2 → draw C2 under C1 (Unicode cluster form). */
-        if (jawa_can_pasangan(cp) && last_cell_is_pangkon()) {
-            int bi = find_stack_base();
-            if (bi >= 0) {
-                if (nt_cur == pos) nt_cur_cell = nt_ncells;
-                emit_cell(pos, nt_cells[bi].x, nt_cells[bi].y, cp,
-                          line_style | STYLE_PASANGAN, 0, lh);
-                pos += n;
-                continue;
-            }
+        /* Orphan mark (no base): placeholder advance so it stays visible. */
+        if (font_jawa_is_mark(cp)) {
+            adv = font_jawa_advance(0xA98F);
+            if (!adv) adv = font_jawa_w() / 2;
         }
 
         if (adv) x = place_adv(x, cp, &prev_cls);
@@ -668,13 +715,18 @@ static void render_note(int scroll) {
     draw_frame(title);
 
     char st[48];
-    snprintf(st, sizeof st, "%s  %s%s",
-             nt_file[0] ? nt_file : "(new)",
-             nt_jawa ? "JAWA" : "LATIN",
-             nt_raw ? " RAW" : "");
+    if (nt_jawa)
+        snprintf(st, sizeof st, "%s  JAWA%d%s",
+                 nt_file[0] ? nt_file : "(new)",
+                 font_jawa_px(),
+                 nt_raw ? " RAW" : "");
+    else
+        snprintf(st, sizeof st, "%s  LATIN%s",
+                 nt_file[0] ? nt_file : "(new)",
+                 nt_raw ? " RAW" : "");
     gfx_puts_at(gx + 2, gy + gh - 20, st, GEM_DGRAY, GEM_WHITE);
     gfx_puts_at(gx + 2, gy + gh - 10,
-                "F1=map F3=JA Sh=pasangan Alt=murda", GEM_DGRAY, GEM_WHITE);
+                "F1=map F3=JA F5=48/64 Sh=pas Alt=extra", GEM_DGRAY, GEM_WHITE);
 
     int max_y = gy + gh - 24;
     /* gutters for left/right more-text arrows */
@@ -691,9 +743,13 @@ static void render_note(int scroll) {
         for (int i = 0; i < nt_ncells; i++) {
             nt_cell_t *c = &nt_cells[i];
             if (!(c->style & STYLE_H1) || c->y == last_hy) continue;
-            if (c->y >= max_y) break;
+            if (c->y >= max_y || c->y < gy) continue;
             int hh = c->lh ? c->lh : line_height_for(c->style);
-            gfx_fill_rect(nt_view_left, c->y, nt_view_right - nt_view_left, hh - 1, GEM_GREEN);
+            if (hh < 1) hh = 1;
+            int bar_h = hh - 1;
+            if (c->y + bar_h > max_y) bar_h = max_y - c->y;
+            if (bar_h > 0)
+                gfx_fill_rect(nt_view_left, c->y, nt_view_right - nt_view_left, bar_h, GEM_GREEN);
             last_hy = c->y;
         }
     }
@@ -702,7 +758,8 @@ static void render_note(int scroll) {
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < nt_ncells; i++) {
             nt_cell_t *c = &nt_cells[i];
-            if (c->y >= max_y) break;
+            if (c->y >= max_y) continue; /* don't assume y-sorted when lh bumps */
+            if (c->y + (c->lh ? c->lh : LATIN_H) < gy) continue;
             if (c->cp == 0 || c->cp == '\n') continue;
             bool is_mark = font_jawa_is_mark(c->cp);
             bool is_pas  = (c->style & STYLE_PASANGAN) != 0;
@@ -711,8 +768,8 @@ static void render_note(int scroll) {
             if (pass == 1 && !is_mark && !is_pas) continue;
 
             int sx = c->x - nt_hscroll + nt_view_left;
-            int gw_cell = (is_mark || is_pas) ? JAWA_W : (c->advance ? c->advance : LATIN_W);
-            if (font_jawa_glyph(c->cp) && !is_pas) gw_cell = JAWA_W;
+            int gw_cell = (is_mark || is_pas) ? font_jawa_w() : (c->advance ? c->advance : LATIN_W);
+            if (font_jawa_glyph(c->cp) && !is_pas) gw_cell = font_jawa_w();
             if (sx + gw_cell < nt_view_left - 4 || sx > nt_view_right + 4) continue;
 
             if (c->cp == 0x2022) {
@@ -746,7 +803,21 @@ static void render_note(int scroll) {
             if (is_pas) {
                 draw_jawa_pasangan(sx, c->y, c->cp, fg);
             } else if (is_mark) {
-                draw_jawa_glyph(sx, c->y, c->cp, fg, 0xFF, false);
+                int mx = sx, my = c->y;
+                /* Below vowels on a pasangan cluster use the baked u.ns.pas
+                 * (etc.) form at the same origin — no crude offset of normal
+                 * suku. Medials stay on the regular mark glyph. */
+                bool use_pas_below = font_jawa_is_below_vowel(c->cp) &&
+                                     stack_has_pasangan(c->x, c->y) &&
+                                     font_jawa_pas_below(c->cp) != 0;
+                /* Skip if entirely outside the horizontal view (use draw x). */
+                int jw = font_jawa_w();
+                if (mx + jw < nt_view_left - 4 || mx > nt_view_right + 4) continue;
+                if (my >= max_y) continue;
+                if (use_pas_below)
+                    draw_jawa_pas_below(mx, my, c->cp, fg);
+                else
+                    draw_jawa_glyph(mx, my, c->cp, fg, 0xFF, false);
             } else {
                 draw_cp(sx, c->y, c->cp, fg, bg, c->style, lh);
                 if ((c->style & STYLE_H2) && c->advance > 0) {
@@ -765,12 +836,17 @@ static void render_note(int scroll) {
     if (nt_cur_cell >= 0 && nt_cur_cell < nt_ncells) {
         nt_cell_t *c = &nt_cells[nt_cur_cell];
         int sx = c->x - nt_hscroll + nt_view_left;
-        int cw = c->advance ? c->advance : ((c->style & STYLE_JAWA) ? JAWA_W / 2 : LATIN_W);
-        if (font_jawa_is_mark(c->cp)) cw = JAWA_W / 2;
+        int cw = c->advance ? c->advance : ((c->style & STYLE_JAWA) ? font_jawa_w() / 2 : LATIN_W);
+        if (font_jawa_is_mark(c->cp) || (c->style & STYLE_PASANGAN)) cw = font_jawa_w() / 2;
         if (cw < 8) cw = 8;
         int ch = c->lh ? c->lh : line_height_for(c->style);
-        if (sx + cw > nt_view_left && sx < nt_view_right)
-            gfx_fill_rect(sx, c->y + ch - 2, cw, 2, GEM_GREEN);
+        int cy = c->y + ch - 2;
+        if (cy >= gy && cy + 2 <= max_y &&
+            sx + cw > nt_view_left && sx < nt_view_right) {
+            int rx = sx < nt_view_left ? nt_view_left : sx;
+            int rw = (sx + cw > nt_view_right ? nt_view_right : sx + cw) - rx;
+            if (rw > 0) gfx_fill_rect(rx, cy, rw, 2, GEM_GREEN);
+        }
     }
 
     /* more-text arrow indicators */
@@ -791,51 +867,93 @@ static void draw_jawa_cp_at(int x, int y, uint32_t cp) {
     draw_jawa_glyph(x, y, cp, GEM_BLACK, GEM_LGRAY, false);
 }
 
-/* Compact key map: 24px glyphs, 4 per row, multi-page with arrows. */
+/* Compact key map: multi-page with arrows. Cell size follows active font. */
 static void show_keymap(void) {
-    typedef struct { uint32_t cp; char key[3]; } map_ent_t;
+    typedef struct { uint32_t cp; const char *key; } map_ent_t;
     static const map_ent_t ents[] = {
+        /* sandhangan */
         {0xA9B6,"1"},{0xA9B8,"2"},{0xA9BA,"3"},{0xA9B4,"4"},
         {0xA9BC,"5"},{0xA9BF,"6"},{0xA9BE,"7"},{0xA9BD,"8"},
         {0xA981,"9"},{0xA982,"0"},{0xA983,"-"},{0xA9C0,"="},
+        {0xA9B7,"A1"},{0xA9B9,"A2"},{0xA9BB,"A3"},{0xA9B5,"A4"},
+        {0xA9B3,"S-"},{0xA980,"S="},
+        /* carakan */
         {0xA9B2,"Q"},{0xA9A4,"W"},{0xA995,"E"},{0xA9AB,"R"},
         {0xA98F,"T"},{0xA9A2,"Y"},{0xA9A0,"U"},{0xA9B1,"I"},
         {0xA9AE,"O"},{0xA9AD,"P"},{0xA9A5,"A"},{0xA99D,"S"},
         {0xA997,"D"},{0xA9AA,"F"},{0xA99A,"G"},{0xA9A9,"H"},
         {0xA992,"J"},{0xA9A7,"K"},{0xA99B,"L"},{0xA994,";"},
+        /* murda / rare (Alt / Alt+Shift) */
+        {0xA99F,"Aw"},{0xA996,"Ae"},{0xA9AC,"Ar"},{0xA991,"At"},
+        {0xA9A3,"Ay"},{0xA9A1,"Au"},{0xA9AF,"Ai"},{0xA9B0,"ASi"},
+        {0xA9A6,"Aa"},{0xA99E,"As"},{0xA999,"Ad"},{0xA998,"Ag"},
+        {0xA993,"Aj"},{0xA9A8,"Ak"},{0xA99C,"Al"},{0xA990,"ASt"},
+        /* vowels + pada */
         {0xA984,"Z"},{0xA986,"X"},{0xA988,"C"},{0xA98C,"V"},
-        {0xA98E,"B"},{0xA9CB,"N"},{0xA9CC,"M"},{0xA9C8,","},
-        {0xA9C9,"."},{0xA9CF,"/"},
+        {0xA98E,"B"},{0xA985,"Sz"},{0xA987,"Sx"},{0xA989,"Sc"},
+        {0xA98D,"Sv"},{0xA98A,"Sb"},{0xA98B,"ASb"},
+        {0xA9CA,"N"},{0xA9CB,"M"},{0xA9C8,","},{0xA9C9,"."},
+        {0xA9CF,"/"},{0xA9CC,"S/"},{0xA9CD,"A8"},
+        {0xA9C1,"Sn"},{0xA9C2,"Sm"},{0xA9C7,"S,"},{0xA9C6,"S."},
+        {0xA9C3,"A5"},{0xA9C4,"A6"},{0xA9C5,"A7"},
+        {0xA9DE,"AS-"},{0xA9DF,"AS="},
+        /* digits */
+        {0xA9D0,"S0"},{0xA9D1,"S1"},{0xA9D2,"S2"},{0xA9D3,"S3"},
+        {0xA9D4,"S4"},{0xA9D5,"S5"},{0xA9D6,"S6"},{0xA9D7,"S7"},
+        {0xA9D8,"S8"},{0xA9D9,"S9"},
     };
     const int nent = (int)(sizeof ents / sizeof ents[0]);
-    const int per_page = 6; /* 3×2 of 64px cells */
+    int jw = font_jawa_w(), jh = font_jawa_h();
+    int cell_w = jw + 30, cell_h = jh + 28;
+    int cols = (gw - 12) / cell_w;
+    if (cols < 2) cols = 2;
+    if (cols > 4) cols = 4;
+    int rows = (gh - 36) / cell_h;
+    if (rows < 1) rows = 1;
+    int per_page = cols * rows;
     int page = 0;
     int pages = (nent + per_page - 1) / per_page;
 
     for (;;) {
+        jw = font_jawa_w(); jh = font_jawa_h();
+        cell_w = jw + 30; cell_h = jh + 28;
+        cols = (gw - 12) / cell_w; if (cols < 2) cols = 2; if (cols > 4) cols = 4;
+        rows = (gh - 36) / cell_h; if (rows < 1) rows = 1;
+        per_page = cols * rows;
+        pages = (nent + per_page - 1) / per_page;
+        if (page >= pages) page = pages - 1;
+
         draw_frame("CARAKAN MAP");
-        char hdr[40];
-        snprintf(hdr, sizeof hdr, "Sh=pasangan Alt=murda  p%d/%d", page + 1, pages);
+        char hdr[48];
+        snprintf(hdr, sizeof hdr, "A=Alt S=Sh  F5=%dpx  p%d/%d",
+                 font_jawa_px(), page + 1, pages);
         gfx_puts_at(gx + 2, gy + 1, hdr, GEM_DGRAY, GEM_WHITE);
 
         int x0 = gx + 6, y0 = gy + 14;
         int start = page * per_page;
         for (int i = 0; i < per_page && start + i < nent; i++) {
-            int col = i % 3, row = i / 3;
-            int x = x0 + col * 98;
-            int y = y0 + row * 112;
-            gfx_fill_rect(x, y, 94, 108, GEM_LGRAY);
-            gfx_rect(x, y, 94, 108, GEM_BLACK);
+            int col = i % cols, row = i / cols;
+            int x = x0 + col * cell_w;
+            int y = y0 + row * cell_h;
+            gfx_fill_rect(x, y, cell_w - 4, cell_h - 4, GEM_LGRAY);
+            gfx_rect(x, y, cell_w - 4, cell_h - 4, GEM_BLACK);
             draw_jawa_cp_at(x + 4, y + 4, ents[start + i].cp);
-            /* key label at 2x so it isn't dwarfed by the aksara */
-            gfx_glyph_scale(x + 72, y + 88, ents[start + i].key[0], 2,
-                            GEM_DGRAY, GEM_LGRAY, false, false);
+            const char *lab = ents[start + i].key;
+            int lx = x + cell_w - 4 - (int)strlen(lab) * FONT_W * 2;
+            if (lx < x + 4) lx = x + 4;
+            for (int k = 0; lab[k]; k++)
+                gfx_glyph_scale(lx + k * FONT_W * 2, y + cell_h - 20, lab[k], 2,
+                                GEM_DGRAY, GEM_LGRAY, false, false);
         }
-        gfx_puts_at(gx + 2, gy + gh - 10, "LEFT/RIGHT=page  ESC=back", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_at(gx + 2, gy + gh - 10, "LEFT/RIGHT=page F5=size ESC=back", GEM_DGRAY, GEM_WHITE);
         gfx_flush();
         int c; wait_key(&c);
         sound_click();
         if (c == KEY_ESC || c == KEY_ENTER) return;
+        if (c == KEY_F5) {
+            font_jawa_set_px(font_jawa_px() == 64 ? 48 : 64);
+            continue;
+        }
         if ((c == KEY_RIGHT || c == KEY_DOWN) && page < pages - 1) page++;
         if ((c == KEY_LEFT || c == KEY_UP) && page > 0) page--;
     }
@@ -943,28 +1061,78 @@ static int cursor_line(void) {
     return line;
 }
 
+/* Count lines in the note (always >= 1). */
+static int note_line_count(void) {
+    int lines = 1;
+    for (int i = 0; i < nt_len; i++)
+        if (nt_buf[i] == '\n') lines++;
+    return lines;
+}
+
 /* Keep cursor on-screen: vertical via logical-line scroll, horizontal via hscroll. */
 static void ensure_cursor_visible(int *scroll, int max_y) {
     int top = gy + 2;
     int view_w = nt_view_right - nt_view_left;
     if (view_w < 40) view_w = gw - 20;
+    int view_h = max_y - top;
+    if (view_h < 8) view_h = 8;
 
-    for (int tries = 0; tries < 64; tries++) {
+    int nlines = note_line_count();
+    int cl = cursor_line();
+    if (cl < 0) cl = 0;
+    if (cl >= nlines) cl = nlines - 1;
+
+    /* Never let vertical scroll leave the document. */
+    if (*scroll < 0) *scroll = 0;
+    if (*scroll >= nlines) *scroll = nlines - 1;
+    if (*scroll < 0) *scroll = 0;
+
+    /* If scroll is past the cursor line, pull back so the cursor can appear. */
+    if (*scroll > cl) *scroll = cl;
+
+    for (int tries = 0; tries < 48; tries++) {
         layout_note(*scroll, max_y);
-        if (nt_cur_cell < 0 || nt_cur_cell >= nt_ncells) return;
-        nt_cell_t *c = &nt_cells[nt_cur_cell];
+
+        /* Find the cell for the cursor (layout may have truncated). */
+        int ci = -1;
+        for (int i = 0; i < nt_ncells; i++) {
+            if (nt_cells[i].byte_off >= nt_cur) { ci = i; break; }
+        }
+        if (ci < 0) {
+            /* Cursor is above the window — scroll up. */
+            if (*scroll > 0) { (*scroll)--; continue; }
+            nt_cur_cell = nt_ncells > 0 ? 0 : -1;
+            break;
+        }
+        nt_cur_cell = ci;
+        nt_cell_t *c = &nt_cells[ci];
         int lh = c->lh ? c->lh : line_height_for(c->style);
+        if (lh < 1) lh = 1;
         int cw = c->advance ? c->advance : LATIN_W;
-        if (font_jawa_is_mark(c->cp)) cw = JAWA_W / 2;
+        if (font_jawa_is_mark(c->cp) || (c->style & STYLE_PASANGAN))
+            cw = font_jawa_w() / 2;
+        if (font_jawa_glyph(c->cp) && c->advance)
+            cw = c->advance;
+        if (cw < 8) cw = 8;
+
+        /* Tall Jawa line taller than the view: pin to cursor line and stop. */
+        if (lh >= view_h) {
+            *scroll = cl;
+            layout_note(*scroll, max_y);
+            break;
+        }
 
         if (c->y < top) {
             if (*scroll == 0) break;
             (*scroll)--;
             continue;
         }
-        if (c->y + lh > max_y) { (*scroll)++; continue; }
+        if (c->y + lh > max_y) {
+            if (*scroll >= nlines - 1) break;
+            (*scroll)++;
+            continue;
+        }
 
-        /* horizontal: keep cursor cell inside the view band */
         if (c->x < nt_hscroll) {
             nt_hscroll = c->x - 8;
             if (nt_hscroll < 0) nt_hscroll = 0;
@@ -975,8 +1143,18 @@ static void ensure_cursor_visible(int *scroll, int max_y) {
             if (nt_hscroll < 0) nt_hscroll = 0;
             continue;
         }
+        {
+            int max_hs = nt_content_max_x - view_w + 8;
+            if (max_hs < 0) max_hs = 0;
+            if (nt_hscroll > max_hs) nt_hscroll = max_hs;
+        }
         return;
     }
+
+    if (*scroll < 0) *scroll = 0;
+    if (*scroll >= nlines) *scroll = nlines - 1;
+    if (*scroll < 0) *scroll = 0;
+    if (nt_hscroll < 0) nt_hscroll = 0;
 }
 
 static void editor_loop(void) {
@@ -994,7 +1172,7 @@ static void editor_loop(void) {
         int page_w = nt_view_right - nt_view_left;
         if (page_w < 40) page_w = gw - 20;
         int page_h = max_y - (gy + 2);
-        if (page_h < JAWA_H) page_h = JAWA_H;
+        if (page_h < font_jawa_h()) page_h = font_jawa_h();
 
         ensure_cursor_visible(&scroll, max_y);
         render_note(scroll);
@@ -1016,17 +1194,24 @@ static void editor_loop(void) {
         if (c == KEY_F2) { save_note(); continue; }
         if (c == KEY_F3) { nt_jawa = !nt_jawa; continue; }
         if (c == KEY_F4) { nt_raw = !nt_raw; continue; }
+        if (c == KEY_F5) {
+            font_jawa_set_px(font_jawa_px() == 64 ? 48 : 64);
+            continue;
+        }
 
         /* Shift+arrows = page scroll one whole screen */
         if (kbd_shift_held() &&
             (c == KEY_LEFT || c == KEY_RIGHT || c == KEY_UP || c == KEY_DOWN)) {
+            int nlines = note_line_count();
             if (c == KEY_LEFT) {
                 nt_hscroll -= page_w;
                 if (nt_hscroll < 0) nt_hscroll = 0;
             } else if (c == KEY_RIGHT) {
                 nt_hscroll += page_w;
+                int max_hs = nt_content_max_x - page_w + 8;
+                if (max_hs < 0) max_hs = 0;
+                if (nt_hscroll > max_hs) nt_hscroll = max_hs;
             } else if (c == KEY_UP) {
-                /* jump up by ~one screen of logical lines */
                 int jump = page_h / (LATIN_H + 2);
                 if (jump < 1) jump = 1;
                 scroll -= jump;
@@ -1035,6 +1220,8 @@ static void editor_loop(void) {
                 int jump = page_h / (LATIN_H + 2);
                 if (jump < 1) jump = 1;
                 scroll += jump;
+                if (scroll >= nlines) scroll = nlines - 1;
+                if (scroll < 0) scroll = 0;
             }
             continue;
         }
@@ -1098,6 +1285,8 @@ static void editor_loop(void) {
              *   letter        → nglegena (base aksara)
              *   Shift+letter  → pasangan = pangkon + consonant (꧀ꦏ etc.)
              *   Alt+letter    → murda / mahaprana where it exists
+             *   Alt+digit     → rare sandhangan / pada
+             *   Alt+Shift     → ka sasak, sa mahaprana, nga lelet raswadi, …
              *   digit row     → sandhangan; Shift+digit → Jawa digits
              */
             bool sh = false, alt = kbd_alt_held();
@@ -1116,11 +1305,15 @@ static void editor_loop(void) {
                 else if (kbd_shift_held()) sh = true;
             }
 
-            /* Alt = murda layer */
-            if (alt && key >= 'a' && key <= 'z') {
-                uint32_t cp = jawa_map_key(key, true);
-                if (cp) nt_insert_cp(cp);
-                continue;
+            /* Alt+Shift = rare forms; Alt alone = murda / extra sandhangan */
+            if (alt) {
+                uint32_t extra = jawa_map_alt(key, sh);
+                if (extra) { nt_insert_cp(extra); continue; }
+                if (key >= 'a' && key <= 'z') {
+                    uint32_t cp = jawa_map_key(key, true);
+                    if (cp) nt_insert_cp(cp);
+                    continue;
+                }
             }
 
             /* Shift + carakan letter = pasangan (store as ꧀ + aksara) */
