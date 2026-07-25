@@ -1,0 +1,3 @@
+#ifndef ESP32_PICO_CYW43_ARCH_H
+#define ESP32_PICO_CYW43_ARCH_H
+#endif

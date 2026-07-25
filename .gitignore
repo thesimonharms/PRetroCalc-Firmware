@@ -2,3 +2,7 @@ build/
 .vs/
 __pycache__/
 *.pyc
+
+esp32s3/.shared_src/
+esp32s3/.pio/
+
