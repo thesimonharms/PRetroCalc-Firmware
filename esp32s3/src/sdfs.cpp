@@ -378,6 +378,40 @@ bool sdfs_append_file(const char *path, const char *buf, uint32_t len) {
     return n >= 0 && (uint32_t)n == len;
 }
 
+bool sdfs_exists(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    return vol.exists(norm_path(path));
+}
+
+static FsFile ro;
+static bool ro_open;
+
+bool sdfs_open_ro(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    if (ro_open) { ro.close(); ro_open = false; }
+    if (!ro.open(norm_path(path), O_RDONLY)) return false;
+    ro_open = true;
+    return true;
+}
+
+void sdfs_close_ro(void) {
+    if (ro_open) { ro.close(); ro_open = false; }
+}
+
+uint32_t sdfs_ro_size(void) {
+    return ro_open ? (uint32_t)ro.fileSize() : 0;
+}
+
+bool sdfs_ro_seek(uint32_t off) {
+    return ro_open && ro.seek(off);
+}
+
+int sdfs_ro_read(void *buf, uint32_t len) {
+    if (!ro_open || !buf) return -1;
+    int n = ro.read(buf, len);
+    return n;
+}
+
 int sdfs_list_dir(const char *path, char names[][48], int max, bool dirs_only) {
     if (!mounted || !names || max <= 0) return 0;
     FsFile dir;

@@ -16,9 +16,13 @@ uint8_t *gfx_fb;
 static spi_device_handle_t lcd;
 
 #define LINE_BYTES (LCD_WIDTH * 3)
+#define SPI_MAX_XFER 4096
 #define PIE_MIN 32
 
 static uint8_t linebuf[LINE_BYTES] __attribute__((aligned(16)));
+static uint16_t rgb565_q[2][LCD_WIDTH] __attribute__((aligned(16)));
+static spi_transaction_t spi_qtx[2];
+static int spi_qn, spi_qi, rgb565_i, direct_565;
 /* RGB332 → R,G,B bytes (pad unused). */
 static uint8_t rgb332_lut[256][4] __attribute__((aligned(16)));
 
@@ -41,10 +45,35 @@ static void mark_dirty(int x, int y) {
     if (x < dirty_x0) dirty_x0 = x; if (x > dirty_x1) dirty_x1 = x;
     if (y < dirty_y0) dirty_y0 = y; if (y > dirty_y1) dirty_y1 = y;
 }
+static void spi_drain(void) {
+    while (spi_qn > 0) {
+        spi_transaction_t *r;
+        if (spi_device_get_trans_result(lcd, &r, portMAX_DELAY) != ESP_OK) break;
+        spi_qn--;
+    }
+}
 static void spi_bytes(const uint8_t *data, size_t len) {
+    spi_drain();
     spi_transaction_t t; memset(&t, 0, sizeof t);
     t.length = (uint32_t)(len * 8); t.tx_buffer = data;
     spi_device_polling_transmit(lcd, &t);
+}
+static void spi_wait_slot(void) {
+    while (spi_qn >= 2) {
+        spi_transaction_t *r;
+        if (spi_device_get_trans_result(lcd, &r, portMAX_DELAY) != ESP_OK) break;
+        spi_qn--;
+    }
+}
+static void spi_bytes_dma(const uint8_t *data, size_t len) {
+    if (!lcd || !data || !len) return;
+    spi_wait_slot();
+    spi_transaction_t *t = &spi_qtx[spi_qi];
+    spi_qi ^= 1;
+    memset(t, 0, sizeof *t);
+    t->length = (uint32_t)(len * 8);
+    t->tx_buffer = data;
+    if (spi_device_queue_trans(lcd, t, portMAX_DELAY) == ESP_OK) spi_qn++;
 }
 static void spi_cmd(uint8_t c) { gpio_set_level(LCD_PIN_DC, 0); spi_bytes(&c, 1); }
 static void spi_data(uint8_t d) { gpio_set_level(LCD_PIN_DC, 1); spi_bytes(&d, 1); }
@@ -87,11 +116,11 @@ void gfx_init(void) {
     gpio_config(&io);
     spi_bus_config_t bus = { .mosi_io_num = LCD_PIN_TX, .miso_io_num = LCD_PIN_RX,
                              .sclk_io_num = LCD_PIN_SCK, .quadwp_io_num = -1, .quadhd_io_num = -1,
-                             .max_transfer_sz = LINE_BYTES };
+                             .max_transfer_sz = SPI_MAX_XFER };
     esp_err_t err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return;
     spi_device_interface_config_t dev = { .clock_speed_hz = LCD_SPI_SPEED, .mode = 0,
-                                           .spics_io_num = LCD_PIN_CS, .queue_size = 1 };
+                                           .spics_io_num = LCD_PIN_CS, .queue_size = 3 };
     if (spi_bus_add_device(SPI2_HOST, &dev, &lcd) != ESP_OK) return;
     gpio_set_level(LCD_PIN_RST, 1); sleep_ms(10); gpio_set_level(LCD_PIN_RST, 0);
     sleep_ms(10); gpio_set_level(LCD_PIN_RST, 1); sleep_ms(200);
@@ -186,7 +215,15 @@ void gfx_puts_fit(int x, int y, const char *s, uint8_t fg, uint8_t bg, int max_w
 }
 void gfx_print(const char*s){while(*s){char c=*s++;if(c=='\n'){cursor_x=0;cursor_y+=8;}else gfx_char(c,cursor_fg,cursor_bg);}} void gfx_print_n(const char*s,int n){while(n--&&*s)gfx_char(*s++,cursor_fg,cursor_bg);}
 void gfx_blit(int x,int y,int w,int h,const uint8_t*d){if(!gfx_fb||!d)return;for(int r=0;r<h;r++)for(int c=0;c<w;c++){int xx=x+c,yy=y+r;if((unsigned)xx<LCD_WIDTH&&(unsigned)yy<LCD_HEIGHT&&d[r*w+c]!=0xff)gfx_fb[yy*LCD_WIDTH+xx]=d[r*w+c];}mark_dirty(x,y);mark_dirty(x+w-1,y+h-1);}
+static void lcd_restore_666(void) {
+    if (!direct_565) return;
+    spi_drain();
+    spi_cmd(0x3A);
+    spi_data(0x66);
+    direct_565 = 0;
+}
 void gfx_flush(void) {
+    lcd_restore_666();
     if (!gfx_fb || dirty_x1 < 0 || !lcd) return;
     if (dirty_x0 < 0) dirty_x0 = 0;
     if (dirty_y0 < 0) dirty_y0 = 0;
@@ -204,6 +241,46 @@ void gfx_flush(void) {
     dirty_x0 = LCD_WIDTH; dirty_y0 = LCD_HEIGHT; dirty_x1 = dirty_y1 = -1;
 }
 void gfx_flush_full(void){dirty_x0=dirty_y0=0;dirty_x1=LCD_WIDTH-1;dirty_y1=LCD_HEIGHT-1;gfx_flush();}
+static int clip_window(int *x, int *y, int *w, int *h) {
+    if (!lcd || *w <= 0 || *h <= 0) return 0;
+    if (*x < 0) { *w += *x; *x = 0; }
+    if (*y < 0) { *h += *y; *y = 0; }
+    if (*x + *w > LCD_WIDTH) *w = LCD_WIDTH - *x;
+    if (*y + *h > LCD_HEIGHT) *h = LCD_HEIGHT - *y;
+    return (*w > 0 && *h > 0);
+}
+void gfx_direct_begin(int x, int y, int w, int h) {
+    lcd_restore_666();
+    if (!clip_window(&x, &y, &w, &h)) return;
+    set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+}
+void gfx_direct_begin_565(int x, int y, int w, int h) {
+    if (!clip_window(&x, &y, &w, &h)) return;
+    spi_drain();
+    spi_cmd(0x3A);
+    spi_data(0x55);
+    direct_565 = 1;
+    set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+}
+void gfx_direct_rgb666(const uint8_t *rgb666, int n_pixels) {
+    if (!lcd || !rgb666 || n_pixels <= 0) return;
+    spi_bytes(rgb666, (size_t)n_pixels * 3);
+}
+void gfx_direct_rgb565(const uint16_t *px, int n_pixels) {
+    if (!lcd || !px || n_pixels <= 0) return;
+    if (n_pixels > LCD_WIDTH) n_pixels = LCD_WIDTH;
+    /* Wait for a free ping-pong slot before copying. The old path memcpy'd
+     * into a buffer that DMA was still reading, which sheared every scanline. */
+    spi_wait_slot();
+    int i = rgb565_i;
+    fb_memcpy(rgb565_q[i], px, (size_t)n_pixels * 2);
+    gpio_set_level(LCD_PIN_DC, 1);
+    spi_bytes_dma((const uint8_t *)rgb565_q[i], (size_t)n_pixels * 2);
+    rgb565_i = i ^ 1;
+}
+void gfx_direct_end(void) {
+    lcd_restore_666();
+}
 void gfx_scroll_up(int px,uint8_t fill) {
     if (!gfx_fb || px <= 0) return;
     if (px >= LCD_HEIGHT)

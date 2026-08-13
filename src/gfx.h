@@ -68,6 +68,12 @@ void gfx_print_n(const char *s, int n);
 
 void gfx_flush(void);        /* push dirty rect */
 void gfx_flush_full(void);
+/* Direct panel write (bypasses RGB332 FB). */
+void gfx_direct_begin(int x, int y, int w, int h);
+void gfx_direct_begin_565(int x, int y, int w, int h);
+void gfx_direct_rgb666(const uint8_t *rgb666, int n_pixels);
+void gfx_direct_rgb565(const uint16_t *px, int n_pixels);
+void gfx_direct_end(void);
 void gfx_scroll_up(int px, uint8_t fill);
 void gfx_scroll_region_up(int x, int y, int w, int h, int px, uint8_t fill);
 

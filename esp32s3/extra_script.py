@@ -18,6 +18,8 @@ shared_c = [
     "app_games.c",
     "app_notes.c",
     "app_chat.c",
+    "app_emu.c",
+    "emu_gb.c",
 ]
 shared_h = [
     "font.h",
@@ -30,6 +32,7 @@ shared_h = [
     "gfx.h",
     "sdfs.h",
     "net.h",
+    "emu.h",
 ]
 
 for name in shared_c + shared_h:

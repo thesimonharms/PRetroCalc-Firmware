@@ -21,6 +21,7 @@ const app_t apps[] = {
     {"NOTES",   "Markdown + Aksara Jawa",     app_notes,    COL_YELLOW},
     {"CALC",    "Calculator",                 app_calc,     COL_WHITE},
     {"CHAT",    "LLM chat (malaikat/Ollama/…)", app_chat,     COL_CYAN},
+    {"EMU",     "Game Boy / GBC emulator",    app_emu,      COL_LGREEN},
     {"SNAKE",   "Classic snake game",         app_snake,    COL_GREEN},
     {"BREAKOUT","Brick breaker",              app_breakout, COL_ORANGE},
     {"INVADERS","Space invaders",             app_invaders, COL_MAGENTA},
