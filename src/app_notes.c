@@ -10,7 +10,6 @@
 #include "sound.h"
 #include "sdfs.h"
 #include "board.h"
-#include "ff.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 #include <string.h>
@@ -266,7 +265,7 @@ static int  nt_view_right;    /* content right edge */
 #define SCRIPT_GAP 6   /* extra px between Latin ↔ Jawa runs */
 
 static void nt_ensure_dir(void) {
-    f_mkdir(NT_PATH);
+    sdfs_mkdir(NT_PATH);
 }
 
 static void nt_insert_bytes(const char *bytes, int n) {
@@ -959,7 +958,7 @@ static void show_keymap(void) {
         char hdr[48];
         snprintf(hdr, sizeof hdr, "A=Alt S=Sh  F5=%dpx  p%d/%d",
                  font_jawa_px(), page + 1, pages);
-        gfx_puts_at(gx + 2, gy + 1, hdr, GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 2, gy + 1, hdr, GEM_DGRAY, GEM_WHITE, gw - 4);
 
         int x0 = gx + 6, y0 = gy + 14;
         int start = page * per_page;
@@ -977,7 +976,7 @@ static void show_keymap(void) {
                 gfx_glyph_scale(lx + k * FONT_W * 2, y + cell_h - 20, lab[k], 2,
                                 GEM_DGRAY, GEM_LGRAY, false, false);
         }
-        gfx_puts_at(gx + 2, gy + gh - 10, "LEFT/RIGHT=page F5=size ESC=back", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 2, gy + gh - 10, "LEFT/RIGHT=page F5=size ESC=back", GEM_DGRAY, GEM_WHITE, gw - 4);
         gfx_flush();
         int c; wait_key(&c);
         sound_click();
@@ -1049,12 +1048,13 @@ static void prompt_filename(void) {
     int cur = len - 3; /* before .md */
     for (;;) {
         draw_frame("NEW NOTE");
-        gfx_puts_at(gx + 4, gy + 20, "Filename:", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 4, gy + 20, "Filename:", GEM_DGRAY, GEM_WHITE, gw - 8);
         gfx_fill_rect(gx + 4, gy + 36, gw - 8, 16, GEM_LGRAY);
         gfx_rect(gx + 4, gy + 36, gw - 8, 16, GEM_BLACK);
-        gfx_puts_at(gx + 8, gy + 40, name, GEM_BLACK, GEM_LGRAY);
-        gfx_fill_rect(gx + 8 + cur * FONT_W, gy + 40 + FONT_H - 1, FONT_W, 1, GEM_GREEN);
-        gfx_puts_at(gx + 4, gy + 60, "ENTER=create  ESC=cancel", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 8, gy + 40, name, GEM_BLACK, GEM_LGRAY, gw - 16);
+        if (gx + 8 + cur * FONT_W + FONT_W <= gx + gw - 4)
+            gfx_fill_rect(gx + 8 + cur * FONT_W, gy + 40 + FONT_H - 1, FONT_W, 1, GEM_GREEN);
+        gfx_puts_fit(gx + 4, gy + 60, "ENTER=create  ESC=cancel", GEM_DGRAY, GEM_WHITE, gw - 8);
         gfx_flush();
         int c; wait_key(&c);
         sound_click();
@@ -1378,22 +1378,32 @@ void app_notes(void) {
     for (;;) {
         int n = os_sd_present ? list_notes(names, 24) : 0;
         draw_frame("NOTES");
-        gfx_puts_at(gx + 4, gy + 2, "N=new  ENTER=open  F1=help", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 4, gy + 2, "N=new  ENTER=open  F1=help", GEM_DGRAY, GEM_WHITE, gw - 8);
 
-        int y = gy + 16;
-        /* virtual entries: New note first */
         int total = n + 1;
-        for (int i = 0; i < total && y < gy + gh - 14; i++) {
-            uint8_t fg = (i == sel) ? GEM_WHITE : GEM_BLACK;
-            uint8_t bg = (i == sel) ? GEM_GREEN : GEM_WHITE;
+        if (sel >= total) sel = total - 1;
+        if (sel < 0) sel = 0;
+        int row_h = FONT_H + 1;
+        int vis = (gh - 40) / row_h;
+        if (vis < 1) vis = 1;
+        int top = sel - vis + 1;
+        if (top < 0) top = 0;
+        if (sel < top) top = sel;
+        int y = gy + 16;
+        for (int i = 0; i < vis && top + i < total; i++) {
+            int idx = top + i;
+            uint8_t fg = (idx == sel) ? GEM_WHITE : GEM_BLACK;
+            uint8_t bg = (idx == sel) ? GEM_GREEN : GEM_WHITE;
             gfx_fill_rect(gx + 2, y, gw - 4, FONT_H, bg);
-            if (i == 0) gfx_puts_at(gx + 6, y, "+ New note", fg, bg);
-            else gfx_puts_at(gx + 6, y, names[i - 1], fg, bg);
-            y += FONT_H + 1;
+            if (idx == 0) gfx_puts_fit(gx + 6, y, "+ New note", fg, bg, gw - 12);
+            else gfx_puts_fit(gx + 6, y, names[idx - 1], fg, bg, gw - 12);
+            y += row_h;
         }
+        if (top > 0) gfx_puts_at(gx + gw - 10, gy + 16, "^", GEM_DGRAY, GEM_WHITE);
+        if (top + vis < total) gfx_puts_at(gx + gw - 10, gy + gh - 26, "v", GEM_DGRAY, GEM_WHITE);
         if (!os_sd_present)
-            gfx_puts_at(gx + 4, gy + gh - 24, "No SD — notes stay in RAM", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx + 2, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE);
+            gfx_puts_fit(gx + 4, gy + gh - 24, "No SD — notes stay in RAM", GEM_DGRAY, GEM_WHITE, gw - 8);
+        gfx_puts_fit(gx + 2, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE, gw - 4);
         gfx_flush();
 
         int c; wait_key(&c);

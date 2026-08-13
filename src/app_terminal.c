@@ -9,7 +9,6 @@
 #include "board.h"
 #include "pico/stdlib.h"
 #include "hardware/watchdog.h"
-#include "ff.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -77,7 +76,7 @@ static void exec_line(char *line) {
     }
     else if (!strcmp(line, "edit")) { app_editor(); os_gem_desktop_bg(); os_term_attach_window(); os_clear_screen(); os_print("(back in terminal)\n"); }
     else if (!strcmp(line, "rm") || !strcmp(line, "del")) {
-        os_print(f_unlink(args) == FR_OK ? "Deleted.\n" : "Delete failed.\n");
+        os_print(sdfs_remove(args) ? "Deleted.\n" : "Delete failed.\n");
     }
     else if (!strcmp(line, "mem")) {
         extern char __StackLimit, __bss_end__;

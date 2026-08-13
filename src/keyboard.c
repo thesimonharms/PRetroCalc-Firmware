@@ -85,8 +85,9 @@ int kbd_battery_percent(void) {
     /* retry once on transient I2C failure before giving up */
     for (int attempt = 0; attempt < 2; attempt++) {
         if (kbd_reg_read16(REG_ID_BAT, &v) >= 0) {
-            int pct = v & 0xFF;
-            if (pct >= 0 && pct <= 100) return pct;
+            /* BIOS returns [reg 0x0B, percent]; bit7 of percent = charging. */
+            int pct = (v >> 8) & 0x7F;
+            if (pct <= 100) return pct;
         }
     }
     return -1;

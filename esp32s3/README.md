@@ -1,12 +1,14 @@
-# PRetroCalc OS — ESP32-S3-Pico (PicoCalc)
+# PRetroCalc OS — ESP32-S3-Pico HAL
 
-Port of PRetroCalc OS for a **Waveshare ESP32-S3-Pico** plugged into a
-**ClockworkPi PicoCalc** (same LCD + STM32 keyboard + SD + speakers).
+This directory is the **main** firmware target: a **Waveshare ESP32-S3-Pico**
+plugged into a **ClockworkPi PicoCalc** (same LCD + STM32 keyboard + SD +
+speakers).
 
-Branch: `esp32s3-pico` (RP2350 / Pico SDK build remains on `main`).
+The Pico 2 W / RP2350 port is on the `pico2w` branch. It was the original
+target, but the RP2350 is not fast or strong enough for this OS.
 
-**Status: untested on hardware.** This port builds successfully with PlatformIO,
-but it has not been flashed or run on a real ESP32-S3-Pico / PicoCalc yet.
+See the [root README](../README.md) for features, CHAT.CFG, PicoScript, and
+usage. This file is the ESP32 HAL / flash notes.
 
 ## Hardware notes
 
@@ -21,6 +23,8 @@ but it has not been flashed or run on a real ESP32-S3-Pico / PicoCalc yet.
 onboard Octal PSRAM pins on the Waveshare module. The double RGB332
 framebuffer of the Pico build is reduced to a **single** 96 KB buffer so
 everything fits in internal SRAM with WiFi.
+
+ESP32-S3 @ 240 MHz, 16 MB flash, Arduino-ESP32 WiFi STA (plain HTTP, no TLS).
 
 ## Build
 
@@ -53,9 +57,3 @@ esp32s3/
   src/                HAL: gfx, keyboard, sound, SD, WiFi, main
 ../src/               shared OS / apps / Jawa font (compiled in)
 ```
-
-## Status
-
-First bring-up target once hardware arrives: splash + launcher + NOTES
-(Aksara Jawa) + keyboard. WiFi CHAT and SD apps need a card and `CHAT.CFG`
-as on the Pico build.

@@ -45,6 +45,7 @@ extern "C" {
 
 void kbd_init(void) {
     Wire.begin(KBD_PIN_SDA, KBD_PIN_SCL, (uint32_t)KBD_I2C_SPEED);
+    Wire.setClock((uint32_t)KBD_I2C_SPEED);
     Wire.setTimeOut(KBD_I2C_TIMEOUT_MS);
     i2c_ok = true;
     /* CFG: REPORT_MODS|USE_MODS|KEY_INT */
@@ -54,11 +55,14 @@ void kbd_init(void) {
     Wire.endTransmission();
 }
 
-static int kbd_reg_read16(uint8_t reg, uint16_t *out) {
+/* FIFO stays on a repeated start (low latency). Battery needs STOP + 16 ms
+ * like ClockworkPi helloworld — otherwise the STM32 returns [0x0B, 0]. */
+static int kbd_reg_read16(uint8_t reg, uint16_t *out, bool stop_and_wait) {
     if (!i2c_ok) return -1;
     Wire.beginTransmission(KBD_I2C_ADDR);
     Wire.write(reg);
-    if (Wire.endTransmission(false) != 0) return -1;
+    if (Wire.endTransmission(stop_and_wait) != 0) return -1;
+    if (stop_and_wait) sleep_ms(16);
     if (Wire.requestFrom((int)KBD_I2C_ADDR, 2) != 2) return -1;
     uint8_t lo = (uint8_t)Wire.read();
     uint8_t hi = (uint8_t)Wire.read();
@@ -79,11 +83,12 @@ void kbd_set_lcd_backlight(uint8_t v) { kbd_reg_write(REG_ID_BKL, v); }
 
 int kbd_battery_percent(void) {
     uint16_t v = 0;
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (kbd_reg_read16(REG_ID_BAT, &v) >= 0) {
-            int pct = v & 0xFF;
-            if (pct >= 0 && pct <= 100) return pct;
+    for (int attempt = 0; attempt < 4; attempt++) {
+        if (kbd_reg_read16(REG_ID_BAT, &v, true) >= 0 && v != 0) {
+            int pct = (v >> 8) & 0x7F;
+            if (pct <= 100) return pct;
         }
+        sleep_ms(20);
     }
     return -1;
 }
@@ -140,7 +145,7 @@ static void process_raw(uint16_t buff) {
 void kbd_poll(void) {
     uint16_t buff = 0;
     for (int i = 0; i < 8; i++) {
-        if (kbd_reg_read16(REG_ID_FIF, &buff) < 0) break;
+        if (kbd_reg_read16(REG_ID_FIF, &buff, false) < 0) break;
         if (buff == 0) break;
         process_raw(buff);
     }

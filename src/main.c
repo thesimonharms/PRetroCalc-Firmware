@@ -20,7 +20,7 @@ const app_t apps[] = {
     {"EDIT",    "Text editor",                app_editor,   COL_AMBER},
     {"NOTES",   "Markdown + Aksara Jawa",     app_notes,    COL_YELLOW},
     {"CALC",    "Calculator",                 app_calc,     COL_WHITE},
-    {"CHAT",    "LLM chat over WiFi",         app_chat,     COL_CYAN},
+    {"CHAT",    "LLM chat (malaikat/Ollama/…)", app_chat,     COL_CYAN},
     {"SNAKE",   "Classic snake game",         app_snake,    COL_GREEN},
     {"BREAKOUT","Brick breaker",              app_breakout, COL_ORANGE},
     {"INVADERS","Space invaders",             app_invaders, COL_MAGENTA},
@@ -57,7 +57,7 @@ static void boot_splash(void) {
 }
 
 static void launcher(void) {
-    int sel = 0;
+    int sel = 0, row0 = 0;
     const int cols = 3;
     absolute_time_t bat_refresh = get_absolute_time();
 
@@ -74,33 +74,44 @@ static void launcher(void) {
         os_window("Applications", &cx, &cy, &cw, &ch);
 
         const int cell_w = cw / cols;
-        const int cell_h = 62;
+        const int cell_h = 52;
+        const int foot_h = 22;
+        int grid_top = cy + 4;
+        int grid_bot = cy + ch - foot_h;
+        int vis_rows = (grid_bot - grid_top) / cell_h;
+        if (vis_rows < 1) vis_rows = 1;
+        int total_rows = (app_count + cols - 1) / cols;
+        int sel_row = sel / cols;
+        if (sel_row < row0) row0 = sel_row;
+        if (sel_row >= row0 + vis_rows) row0 = sel_row - vis_rows + 1;
+        if (row0 > total_rows - vis_rows) row0 = total_rows - vis_rows;
+        if (row0 < 0) row0 = 0;
+
         for (int i = 0; i < app_count; i++) {
+            int r = i / cols;
+            if (r < row0 || r >= row0 + vis_rows) continue;
             int gx = cx + (i % cols) * cell_w;
-            int gy = cy + 6 + (i / cols) * cell_h;
+            int gy = grid_top + (r - row0) * cell_h;
             bool cur = (i == sel);
-            /* icon: 24x24 box with initial, label under */
-            int ix = gx + cell_w / 2 - 12, iy = gy + 4;
-            if (cur) {
-                gfx_fill_rect(ix - 6, iy - 4, 36, 46, GEM_GREEN);
-            }
+            int ix = gx + cell_w / 2 - 12, iy = gy + 2;
+            if (cur) gfx_fill_rect(ix - 6, iy - 2, 36, 44, GEM_GREEN);
             gfx_fill_rect(ix, iy, 24, 24, GEM_WHITE);
             gfx_rect(ix, iy, 24, 24, GEM_BLACK);
             char init[2] = { apps[i].name[0], 0 };
             gfx_puts_at(ix + 8, iy + 8, init, GEM_BLACK, GEM_WHITE);
-            int tw = strlen(apps[i].name) * 8;
             uint8_t lfg = cur ? GEM_WHITE : GEM_BLACK;
             uint8_t lbg = cur ? GEM_GREEN : GEM_WHITE;
-            /* label background */
-            gfx_fill_rect(gx + (cell_w - tw) / 2 - 2, iy + 30, tw + 4, 9, lbg);
-            gfx_puts_at(gx + (cell_w - tw) / 2, iy + 31, apps[i].name, lfg, lbg);
+            gfx_fill_rect(gx + 2, iy + 28, cell_w - 4, 9, lbg);
+            gfx_puts_fit(gx + 2, iy + 29, apps[i].name, lfg, lbg, cell_w - 4);
         }
+        if (row0 > 0)
+            gfx_puts_at(cx + cw - 10, grid_top, "^", GEM_BLACK, GEM_WHITE);
+        if (row0 + vis_rows < total_rows)
+            gfx_puts_at(cx + cw - 10, grid_bot - 10, "v", GEM_BLACK, GEM_WHITE);
 
-        /* status line at bottom of desktop */
-        gfx_fill_rect(0, LCD_HEIGHT - 12, LCD_WIDTH, 12, GEM_WHITE);
-        gfx_hline(0, LCD_HEIGHT - 12, LCD_WIDTH, GEM_BLACK);
-        gfx_puts_at(4, LCD_HEIGHT - 10, "ARROWS=move ENTER=open T=terminal", GEM_BLACK, GEM_WHITE);
-        gfx_puts_at(4, cy + ch - 10, apps[sel].desc, GEM_DGRAY, GEM_WHITE);
+        gfx_hline(cx, cy + ch - foot_h, cw, GEM_BLACK);
+        gfx_puts_fit(cx + 4, cy + ch - 20, apps[sel].desc, GEM_DGRAY, GEM_WHITE, cw - 8);
+        gfx_puts_fit(cx + 4, cy + ch - 10, "ARROWS  ENTER=open  T=term", GEM_BLACK, GEM_WHITE, cw - 8);
 
         gfx_flush();
 
@@ -121,6 +132,14 @@ static void launcher(void) {
             case KEY_RIGHT: sel = (sel + 1) % app_count; break;
             case KEY_UP:    sel = (sel + app_count - cols) % app_count; break;
             case KEY_DOWN:  sel = (sel + cols) % app_count; break;
+            case KEY_PAGE_UP:
+                sel -= cols * vis_rows;
+                if (sel < 0) sel = 0;
+                break;
+            case KEY_PAGE_DOWN:
+                sel += cols * vis_rows;
+                if (sel >= app_count) sel = app_count - 1;
+                break;
             case 't': case 'T': app_terminal(); break;
             case KEY_ENTER:
                 apps[sel].run();

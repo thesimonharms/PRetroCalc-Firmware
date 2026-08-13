@@ -21,7 +21,7 @@ static int gx, gy, gw, gh;   /* client rect from os_window */
 static void draw_frame(const char *title) {
     os_gem_desktop_bg();
     os_window(title, &gx, &gy, &gw, &gh);
-    gfx_puts_at(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE);
+    gfx_puts_fit(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE, gw);
 }
 
 static bool wait_key(int *code) {
@@ -93,14 +93,14 @@ void app_calc(void) {
         gfx_puts_at(gx + 4, gy + 8, "EXPR:", GEM_DGRAY, GEM_WHITE);
         gfx_fill_rect(gx + 4, gy + 20, gw - 8, 18, GEM_LGRAY);
         gfx_rect(gx + 4, gy + 20, gw - 8, 18, GEM_BLACK);
-        gfx_puts_at(gx + 8, gy + 25, expr, GEM_BLACK, GEM_LGRAY);
+        gfx_puts_fit(gx + 8, gy + 25, expr, GEM_BLACK, GEM_LGRAY, gw - 16);
         gfx_puts_at(gx + 4, gy + 48, "=", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx + 20, gy + 48, result, GEM_GREEN, GEM_WHITE);
+        gfx_puts_fit(gx + 20, gy + 48, result, GEM_GREEN, GEM_WHITE, gw - 28);
         char mb[40]; snprintf(mb, sizeof mb, "MEM: %.6g", mem);
-        gfx_puts_at(gx + 4, gy + 66, mb, GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx + 4, gy + 100, "ENTER: eval  C: clear", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx + 4, gy + 110, "M: store  R: recall", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 4, gy + 66, mb, GEM_DGRAY, GEM_WHITE, gw - 8);
+        gfx_puts_fit(gx + 4, gy + 100, "ENTER: eval  C: clear", GEM_DGRAY, GEM_WHITE, gw - 8);
+        gfx_puts_fit(gx + 4, gy + 110, "M: store  R: recall", GEM_DGRAY, GEM_WHITE, gw - 8);
+        gfx_puts_fit(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE, gw);
         gfx_flush();
 
         int c; wait_key(&c);
@@ -126,38 +126,45 @@ void app_calc(void) {
 
 #define ED_MAX 4096
 #define ED_COLS 40
-#define ED_ROWS 36
 
 static char ed_buf[ED_MAX];
 static int ed_len = 0;
 static int ed_cursor = 0;
 static char ed_file[48] = "UNTITLED.TXT";
 
+static int ed_vis_rows(void) {
+    int n = (gh - 16) / FONT_H;
+    return n < 1 ? 1 : n;
+}
+
 static void ed_render(int scroll) {
-    draw_frame("EDIT");
-    gfx_puts_at(gx + 50, gy - 17, ed_file, GEM_DGRAY, GEM_WHITE);
+    char ttl[48];
+    snprintf(ttl, sizeof ttl, "EDIT  %s", ed_file);
+    draw_frame(ttl);
     int y = gy + 2;
     int pos = 0;
     int line = 0;
-    /* compute start of display line = scroll */
     while (pos < ed_len && line < scroll) {
         if (ed_buf[pos] == '\n') line++;
         pos++;
     }
-    int cursor_screen_x = 0, cursor_screen_y = 0;
+    int cursor_screen_x = gx, cursor_screen_y = y;
     bool cursor_found = false;
     int x = gx;
-    for (int i = pos; y < gy + gh - 14; i++) {
+    int y_lim = gy + gh - 14;
+    for (int i = pos; y < y_lim; i++) {
         if (i == ed_cursor) { cursor_screen_x = x; cursor_screen_y = y; cursor_found = true; }
         if (i >= ed_len) break;
         char ch = ed_buf[i];
         if (ch == '\n') { x = gx; y += FONT_H; continue; }
-        if (x < gx + gw - FONT_W) gfx_glyph(x, y, ch, GEM_BLACK, GEM_WHITE);
+        if (x + FONT_W <= gx + gw && y + FONT_H <= y_lim)
+            gfx_glyph(x, y, ch, GEM_BLACK, GEM_WHITE);
         x += FONT_W;
         if (x > gx + gw - FONT_W) { x = gx; y += FONT_H; }
     }
     if (!cursor_found) { cursor_screen_x = x; cursor_screen_y = y; }
-    gfx_fill_rect(cursor_screen_x, cursor_screen_y + FONT_H - 1, FONT_W, 1, GEM_GREEN);
+    if (cursor_screen_y + FONT_H <= y_lim && cursor_screen_x + FONT_W <= gx + gw)
+        gfx_fill_rect(cursor_screen_x, cursor_screen_y + FONT_H - 1, FONT_W, 1, GEM_GREEN);
 }
 
 void app_editor(void) {
@@ -173,7 +180,7 @@ void app_editor(void) {
         if (c == KEY_ESC) {
             if (dirty && os_sd_present) {
                 /* save prompt: F2 = save */
-                gfx_puts_at(gx, gy + gh - 10, "F2=save ESC=discard", GEM_GREEN, GEM_WHITE);
+                gfx_puts_fit(gx, gy + gh - 10, "F2=save ESC=discard", GEM_GREEN, GEM_WHITE, gw);
                 gfx_flush();
                 int c2; wait_key(&c2);
                 if (c2 == KEY_F2) {
@@ -194,7 +201,7 @@ void app_editor(void) {
                 while (col-- > 0 && ed_buf[p] != '\n' && p < ed_len) p++;
                 ed_cursor = p;
             }
-            if (scroll > 0 && ed_cursor < scroll * 40) scroll--;
+            if (scroll > 0 && ed_cursor < scroll * ED_COLS) scroll--;
         }
         else if (c == KEY_DOWN) {
             int col = 0, p = ed_cursor;
@@ -222,11 +229,12 @@ void app_editor(void) {
             memmove(&ed_buf[ed_cursor+1], &ed_buf[ed_cursor], ed_len - ed_cursor);
             ed_buf[ed_cursor++] = c; ed_len++; ed_buf[ed_len] = 0; dirty = true;
         }
-        /* keep cursor line visible */
+        /* keep cursor line visible inside the window */
         int line = 0;
         for (int i = 0; i < ed_cursor; i++) if (ed_buf[i] == '\n') line++;
+        int vis = ed_vis_rows();
         if (line < scroll) scroll = line;
-        if (line >= scroll + ED_ROWS) scroll = line - ED_ROWS + 1;
+        if (line >= scroll + vis) scroll = line - vis + 1;
     }
 }
 
@@ -235,7 +243,7 @@ void app_editor(void) {
 void app_files(void) {
     if (!os_sd_present) {
         draw_frame("FILES");
-        gfx_puts_at(gx + 20, gy + 60, "No SD card inserted", GEM_BLACK, GEM_WHITE);
+        gfx_puts_fit(gx + 4, gy + 60, "No SD card inserted", GEM_BLACK, GEM_WHITE, gw - 8);
         gfx_flush();
         int c; wait_key(&c);
         return;
@@ -245,16 +253,25 @@ void app_files(void) {
     for (;;) {
         int n = sdfs_list_dir("/", names, 24, false);
         draw_frame("FILES  /");
+        int vis = (gh - 18) / FONT_H;
+        if (vis < 1) vis = 1;
+        if (sel >= n && n > 0) sel = n - 1;
+        int top = sel - vis + 1;
+        if (top < 0) top = 0;
+        if (sel < top) top = sel;
         int y = gy + 4;
-        for (int i = 0; i < n && i < 20; i++) {
-            uint8_t fg = (i == sel) ? GEM_WHITE : GEM_BLACK;
-            uint8_t bg = (i == sel) ? GEM_GREEN : GEM_WHITE;
+        for (int i = 0; i < vis && top + i < n; i++) {
+            int idx = top + i;
+            uint8_t fg = (idx == sel) ? GEM_WHITE : GEM_BLACK;
+            uint8_t bg = (idx == sel) ? GEM_GREEN : GEM_WHITE;
             gfx_fill_rect(gx, y, gw, FONT_H, bg);
-            gfx_puts_at(gx + 4, y, names[i], fg, bg);
+            gfx_puts_fit(gx + 4, y, names[idx], fg, bg, gw - 8);
             y += FONT_H;
         }
-        if (n == 0) gfx_puts_at(gx + 20, gy + 40, "(empty card)", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx, gy + gh - 10, "ENTER=open/run  ESC=close", GEM_DGRAY, GEM_WHITE);
+        if (n == 0) gfx_puts_fit(gx + 4, gy + 40, "(empty card)", GEM_DGRAY, GEM_WHITE, gw - 8);
+        if (top > 0) gfx_puts_at(gx + gw - 10, gy + 4, "^", GEM_DGRAY, GEM_WHITE);
+        if (top + vis < n) gfx_puts_at(gx + gw - 10, gy + gh - 22, "v", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx, gy + gh - 10, "ENTER=open/run  ESC=close", GEM_DGRAY, GEM_WHITE, gw);
         gfx_flush();
         int c; wait_key(&c);
         sound_click();
@@ -270,7 +287,7 @@ void app_files(void) {
                 if (sdfs_read_file(names[sel], buf, sizeof(buf), &rl)) {
                     os_clear_screen();
                     pscript_run(buf);
-                    gfx_puts_at(gx, gy + gh - 10, "Press any key...", GEM_DGRAY, GEM_WHITE);
+                    gfx_puts_fit(gx, gy + gh - 10, "Press any key...", GEM_DGRAY, GEM_WHITE, gw);
                     gfx_flush();
                     wait_key(&c);
                 }
@@ -280,14 +297,16 @@ void app_files(void) {
                 if (sdfs_read_file(names[sel], buf, sizeof(buf), &rl)) {
                     draw_frame(names[sel]);
                     int y = gy + 2, x = gx + 4;
-                    for (uint32_t i = 0; i < rl && y < gy + gh - 12; i++) {
+                    int y_lim = gy + gh - 12;
+                    for (uint32_t i = 0; i < rl && y < y_lim; i++) {
                         char ch = buf[i];
                         if (ch == '\n') { x = gx + 4; y += FONT_H; continue; }
-                        if (ch >= 32 && ch < 127) gfx_glyph(x, y, ch, GEM_BLACK, GEM_WHITE);
+                        if (ch >= 32 && ch < 127 && x + FONT_W <= gx + gw && y + FONT_H <= y_lim)
+                            gfx_glyph(x, y, ch, GEM_BLACK, GEM_WHITE);
                         x += FONT_W;
-                        if (x > gx + gw - 12) { x = gx + 4; y += FONT_H; }
+                        if (x > gx + gw - FONT_W) { x = gx + 4; y += FONT_H; }
                     }
-                    gfx_puts_at(gx, gy + gh - 10, "Press any key...", GEM_DGRAY, GEM_WHITE);
+                    gfx_puts_fit(gx, gy + gh - 10, "Press any key...", GEM_DGRAY, GEM_WHITE, gw);
                     gfx_flush();
                     wait_key(&c);
                 }
@@ -303,24 +322,34 @@ void app_monitor(void) {
         draw_frame("SYS MONITOR");
         int bat = kbd_battery_percent();
         char buf[64];
-        snprintf(buf, sizeof buf, "Battery : %d%%", bat);
-        gfx_puts_at(gx + 8, gy + 8, buf, GEM_BLACK, GEM_WHITE);
+        if (bat < 0) snprintf(buf, sizeof buf, "Battery : n/a");
+        else snprintf(buf, sizeof buf, "Battery : %d%%", bat);
+        gfx_puts_fit(gx + 8, gy + 8, buf, GEM_BLACK, GEM_WHITE, gw - 16);
         /* battery bar */
-        gfx_rect(gx + 8, gy + 22, 200, 12, GEM_BLACK);
-        gfx_fill_rect(gx + 9, gy + 23, (200 - 2) * (bat < 0 ? 0 : bat > 100 ? 100 : bat) / 100, 10,
+        int bar_w = gw - 20; if (bar_w > 200) bar_w = 200; if (bar_w < 40) bar_w = 40;
+        gfx_rect(gx + 8, gy + 22, bar_w, 12, GEM_BLACK);
+        gfx_fill_rect(gx + 9, gy + 23, (bar_w - 2) * (bat < 0 ? 0 : bat > 100 ? 100 : bat) / 100, 10,
                       GEM_GREEN);
-        snprintf(buf, sizeof buf, "CPU     : RP2350 @ 200 MHz dual core M33");
-        gfx_puts_at(gx + 8, gy + 44, buf, GEM_BLACK, GEM_WHITE);
+#if defined(ARDUINO) || defined(ESP_PLATFORM)
+        snprintf(buf, sizeof buf, "CPU     : ESP32-S3 @ 240 MHz");
+        gfx_puts_fit(gx + 8, gy + 44, buf, GEM_BLACK, GEM_WHITE, gw - 16);
+        snprintf(buf, sizeof buf, "RAM     : internal SRAM (no PSRAM)");
+        gfx_puts_fit(gx + 8, gy + 58, buf, GEM_BLACK, GEM_WHITE, gw - 16);
+        snprintf(buf, sizeof buf, "Display : 320x320 RGB666 @ SPI 40MHz");
+#else
+        snprintf(buf, sizeof buf, "CPU     : RP2350 @ 200 MHz");
+        gfx_puts_fit(gx + 8, gy + 44, buf, GEM_BLACK, GEM_WHITE, gw - 16);
         snprintf(buf, sizeof buf, "RAM     : 520 KB SRAM");
-        gfx_puts_at(gx + 8, gy + 58, buf, GEM_BLACK, GEM_WHITE);
+        gfx_puts_fit(gx + 8, gy + 58, buf, GEM_BLACK, GEM_WHITE, gw - 16);
         snprintf(buf, sizeof buf, "Display : 320x320 RGB666 @ SPI 62MHz");
-        gfx_puts_at(gx + 8, gy + 72, buf, GEM_BLACK, GEM_WHITE);
-        snprintf(buf, sizeof buf, "SD card : %s", os_sd_present ? "present" : "absent");
-        gfx_puts_at(gx + 8, gy + 86, buf, GEM_BLACK, GEM_WHITE);
+#endif
+        gfx_puts_fit(gx + 8, gy + 72, buf, GEM_BLACK, GEM_WHITE, gw - 16);
+        snprintf(buf, sizeof buf, "SD card : %s", os_sd_present ? "present" : sdfs_diag());
+        gfx_puts_fit(gx + 8, gy + 86, buf, GEM_BLACK, GEM_WHITE, gw - 16);
         uint32_t up = to_ms_since_boot(get_absolute_time()) / 1000;
         snprintf(buf, sizeof buf, "Uptime  : %02lu:%02lu:%02lu", up / 3600, (up / 60) % 60, up % 60);
-        gfx_puts_at(gx + 8, gy + 100, buf, GEM_BLACK, GEM_WHITE);
-        gfx_puts_at(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 8, gy + 100, buf, GEM_BLACK, GEM_WHITE, gw - 16);
+        gfx_puts_fit(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE, gw);
         gfx_flush();
 
         /* non-blocking key check with 500ms refresh */
@@ -354,11 +383,11 @@ void app_settings(void) {
             else if (i == 1) snprintf(buf, sizeof buf, "%-14s %3d", items[i], kbd_bl);
             else if (i == 2) snprintf(buf, sizeof buf, "%-14s %s", items[i], click ? "on" : "off");
             else snprintf(buf, sizeof buf, "%s", items[i]);
-            gfx_puts_at(gx + 10, y, buf, fg, bg);
+            gfx_puts_fit(gx + 10, y, buf, fg, bg, gw - 20);
             y += 14;
         }
-        gfx_puts_at(gx + 6, gy + 80, "LEFT/RIGHT adjust, ENTER=act", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 6, gy + 80, "LEFT/RIGHT adjust, ENTER=act", GEM_DGRAY, GEM_WHITE, gw - 12);
+        gfx_puts_fit(gx, gy + gh - 10, "ESC=close", GEM_DGRAY, GEM_WHITE, gw);
         gfx_flush();
         int c; wait_key(&c);
         sound_click();
@@ -394,13 +423,21 @@ void app_about(void) {
         "|_|   |_| \\_\\___|\\__|_|  \\___",
     };
     int y = cy + 16;
-    for (int i = 0; i < 5; i++) { gfx_puts_at(cx + 16, y, logo[i], GEM_GREEN, GEM_WHITE); y += 8; }
-    gfx_puts_at(cx + 60, y + 12, "P R e t r o C a l c   O S", GEM_BLACK, GEM_WHITE);
-    gfx_puts_at(cx + 88, y + 24, "v1.0  for  PicoCalc", GEM_DGRAY, GEM_WHITE);
-    gfx_puts_at(cx + 24, y + 44, "RP2350 * 320x320 * 520KB RAM * GEM/TOS", GEM_DGRAY, GEM_WHITE);
-    gfx_puts_at(cx + 52, y + 60, "Written in C with the Pico SDK", GEM_DGRAY, GEM_WHITE);
-    gfx_puts_at(cx + 30, y + 74, "PicoScript for user programs on SD card", GEM_DGRAY, GEM_WHITE);
-    gfx_puts_at(cx + 90, y + 96, "Press any key", GEM_DGRAY, GEM_WHITE);
+    for (int i = 0; i < 5; i++) {
+        gfx_puts_fit(cx + 4, y, logo[i], GEM_GREEN, GEM_WHITE, cw - 8);
+        y += 8;
+    }
+    gfx_puts_fit(cx + 4, y + 12, "PRetroCalc OS", GEM_BLACK, GEM_WHITE, cw - 8);
+    gfx_puts_fit(cx + 4, y + 24, "v1.0  for  PicoCalc", GEM_DGRAY, GEM_WHITE, cw - 8);
+#if defined(ARDUINO) || defined(ESP_PLATFORM)
+    gfx_puts_fit(cx + 4, y + 44, "ESP32-S3 * 320x320 * GEM/TOS", GEM_DGRAY, GEM_WHITE, cw - 8);
+    gfx_puts_fit(cx + 4, y + 60, "Xtensa firmware (Arduino-ESP32)", GEM_DGRAY, GEM_WHITE, cw - 8);
+#else
+    gfx_puts_fit(cx + 4, y + 44, "RP2350 * 320x320 * GEM/TOS", GEM_DGRAY, GEM_WHITE, cw - 8);
+    gfx_puts_fit(cx + 4, y + 60, "Written in C with the Pico SDK", GEM_DGRAY, GEM_WHITE, cw - 8);
+#endif
+    gfx_puts_fit(cx + 4, y + 74, "PicoScript programs live on the SD card", GEM_DGRAY, GEM_WHITE, cw - 8);
+    gfx_puts_fit(cx + 4, y + 96, "Press any key", GEM_DGRAY, GEM_WHITE, cw - 8);
     gfx_flush();
     int c; wait_key(&c);
 }

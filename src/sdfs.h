@@ -5,6 +5,9 @@
 #include <stdint.h>
 
 bool sdfs_init(void);          /* mount /, returns false if no card */
+const char *sdfs_diag(void);   /* short mount diagnostic for UI */
+bool sdfs_mkdir(const char *path);
+bool sdfs_remove(const char *path);
 bool sdfs_read_file(const char *path, char *buf, uint32_t max, uint32_t *out_len);
 bool sdfs_write_file(const char *path, const char *buf, uint32_t len);
 bool sdfs_append_file(const char *path, const char *buf, uint32_t len);

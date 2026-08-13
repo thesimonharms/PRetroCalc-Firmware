@@ -16,6 +16,21 @@ bool sdfs_init(void) {
     return true;
 }
 
+const char *sdfs_diag(void) {
+    return mounted ? "ok" : "no card";
+}
+
+bool sdfs_mkdir(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    FRESULT fr = f_mkdir(path);
+    return fr == FR_OK || fr == FR_EXIST;
+}
+
+bool sdfs_remove(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    return f_unlink(path) == FR_OK;
+}
+
 bool sdfs_read_file(const char *path, char *buf, uint32_t max, uint32_t *out_len) {
     if (!mounted) return false;
     FIL f;

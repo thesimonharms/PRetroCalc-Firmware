@@ -60,5 +60,8 @@
 #ifndef SD_PIN_CS
 #define SD_PIN_CS 41
 #endif
+#ifndef SD_PIN_DET
+#define SD_PIN_DET 6
+#endif
 
 #endif

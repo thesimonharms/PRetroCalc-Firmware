@@ -30,7 +30,7 @@
 #define REG_ID_BKL      0x05   /* LCD backlight */
 #define REG_ID_FIF      0x09   /* key FIFO */
 #define REG_ID_BK2      0x0A   /* keyboard backlight */
-#define REG_ID_BAT      0x0B   /* battery percent (lo byte) */
+#define REG_ID_BAT      0x0B   /* battery: hi byte = percent (bit7=charging) */
 #define REG_ID_OFF      0x0E   /* write 1 -> power off */
 
 /* PWM audio (dual speakers) */

@@ -61,6 +61,8 @@ void gfx_glyph_scale(int x, int y, char ch, int scale, uint8_t fg, uint8_t bg,
                      bool bold, bool italic);
 void gfx_char(char ch, uint8_t fg, uint8_t bg);
 void gfx_puts_at(int x, int y, const char *s, uint8_t fg, uint8_t bg);
+/* Draw s within max_w pixels; truncate with "..." if it would overflow. */
+void gfx_puts_fit(int x, int y, const char *s, uint8_t fg, uint8_t bg, int max_w);
 void gfx_print(const char *s);
 void gfx_print_n(const char *s, int n);
 

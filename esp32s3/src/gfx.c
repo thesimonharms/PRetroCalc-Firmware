@@ -1,7 +1,10 @@
+#pragma GCC optimize("O3")
+
 #include "gfx.h"
 #include "font.h"
 #include "board.h"
 #include "pico/stdlib.h"
+#include "s3_pie.h"
 #include <driver/spi_master.h>
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
@@ -11,10 +14,26 @@
 /* Allocated at gfx_init — keeps 96KB out of .bss so the image links. */
 uint8_t *gfx_fb;
 static spi_device_handle_t lcd;
-static uint8_t linebuf[LCD_WIDTH * 3] __attribute__((aligned(4)));
+
+#define LINE_BYTES (LCD_WIDTH * 3)
+#define PIE_MIN 32
+
+static uint8_t linebuf[LINE_BYTES] __attribute__((aligned(16)));
+/* RGB332 → R,G,B bytes (pad unused). */
+static uint8_t rgb332_lut[256][4] __attribute__((aligned(16)));
+
 static uint8_t cursor_fg = COL_WHITE, cursor_bg = COL_BLACK;
 static int cursor_x, cursor_y;
 static int dirty_x0 = LCD_WIDTH, dirty_y0 = LCD_HEIGHT, dirty_x1 = -1, dirty_y1 = -1;
+
+static inline void fb_memset(void *d, uint8_t v, size_t n) {
+    if (n >= PIE_MIN) s3_pie_memset(d, v, n);
+    else memset(d, v, n);
+}
+static inline void fb_memcpy(void *d, const void *s, size_t n) {
+    if (n >= PIE_MIN) s3_pie_memcpy(d, s, n);
+    else memcpy(d, s, n);
+}
 
 static void mark_dirty(int x, int y) {
     if (x < 0) x = 0; if (y < 0) y = 0;
@@ -38,17 +57,28 @@ static void set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
 }
 static void expand_line(const uint8_t *src, uint8_t *dst, int n) {
     while (n--) {
-        uint8_t p = *src++, r3 = p >> 5, g3 = (p >> 2) & 7, b2 = p & 3;
-        *dst++ = (uint8_t)((r3 << 3 | r3) << 2);
-        *dst++ = (uint8_t)((g3 << 3 | g3) << 2);
-        *dst++ = (uint8_t)((b2 << 4 | b2 << 2 | b2) << 2);
+        const uint8_t *p = rgb332_lut[*src++];
+        *dst++ = p[0];
+        *dst++ = p[1];
+        *dst++ = p[2];
+    }
+}
+
+static void init_rgb332_lut(void) {
+    for (int p = 0; p < 256; p++) {
+        uint8_t r3 = (uint8_t)(p >> 5), g3 = (uint8_t)((p >> 2) & 7), b2 = (uint8_t)(p & 3);
+        rgb332_lut[p][0] = (uint8_t)((r3 << 3 | r3) << 2);
+        rgb332_lut[p][1] = (uint8_t)((g3 << 3 | g3) << 2);
+        rgb332_lut[p][2] = (uint8_t)((b2 << 4 | b2 << 2 | b2) << 2);
+        rgb332_lut[p][3] = 0;
     }
 }
 
 void gfx_init(void) {
+    init_rgb332_lut();
     if (!gfx_fb) {
-        gfx_fb = (uint8_t *)heap_caps_malloc(LCD_WIDTH * LCD_HEIGHT,
-                                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        gfx_fb = (uint8_t *)heap_caps_aligned_alloc(16, LCD_WIDTH * LCD_HEIGHT,
+                                                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
         if (!gfx_fb) return;
     }
     gpio_config_t io = { .pin_bit_mask = (1ULL << LCD_PIN_DC) | (1ULL << LCD_PIN_RST),
@@ -57,7 +87,7 @@ void gfx_init(void) {
     gpio_config(&io);
     spi_bus_config_t bus = { .mosi_io_num = LCD_PIN_TX, .miso_io_num = LCD_PIN_RX,
                              .sclk_io_num = LCD_PIN_SCK, .quadwp_io_num = -1, .quadhd_io_num = -1,
-                             .max_transfer_sz = LCD_WIDTH * 3 };
+                             .max_transfer_sz = LINE_BYTES };
     esp_err_t err = spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return;
     spi_device_interface_config_t dev = { .clock_speed_hz = LCD_SPI_SPEED, .mode = 0,
@@ -79,11 +109,20 @@ void gfx_init(void) {
     spi_cmd(0x11); sleep_ms(120); spi_cmd(0x29); sleep_ms(20); gfx_clear(COL_BLACK);
 }
 void gfx_pixel(int x,int y,uint8_t c) { if (!gfx_fb) return; if ((unsigned)x<LCD_WIDTH && (unsigned)y<LCD_HEIGHT) { gfx_fb[y*LCD_WIDTH+x]=c; mark_dirty(x,y); } }
-void gfx_clear(uint8_t c) { if (!gfx_fb) return; memset(gfx_fb,c,LCD_WIDTH*LCD_HEIGHT); dirty_x0=dirty_y0=0; dirty_x1=LCD_WIDTH-1; dirty_y1=LCD_HEIGHT-1; }
+void gfx_clear(uint8_t c) {
+    if (!gfx_fb) return;
+    fb_memset(gfx_fb, c, (size_t)LCD_WIDTH * LCD_HEIGHT);
+    dirty_x0 = dirty_y0 = 0; dirty_x1 = LCD_WIDTH - 1; dirty_y1 = LCD_HEIGHT - 1;
+}
 void gfx_fill_rect(int x,int y,int w,int h,uint8_t c) {
     if (!gfx_fb) return;
     if(x<0){w+=x;x=0;} if(y<0){h+=y;y=0;} if(x+w>LCD_WIDTH)w=LCD_WIDTH-x; if(y+h>LCD_HEIGHT)h=LCD_HEIGHT-y;
-    if(w<=0||h<=0)return; for(int r=0;r<h;r++)memset(gfx_fb+(y+r)*LCD_WIDTH+x,c,w); mark_dirty(x,y);mark_dirty(x+w-1,y+h-1);
+    if(w<=0||h<=0)return;
+    if (x == 0 && w == LCD_WIDTH)
+        fb_memset(gfx_fb + (size_t)y * LCD_WIDTH, c, (size_t)h * LCD_WIDTH);
+    else
+        for (int r = 0; r < h; r++) fb_memset(gfx_fb + (size_t)(y + r) * LCD_WIDTH + x, c, (size_t)w);
+    mark_dirty(x,y);mark_dirty(x+w-1,y+h-1);
 }
 void gfx_rect(int x,int y,int w,int h,uint8_t c){gfx_fill_rect(x,y,w,1,c);gfx_fill_rect(x,y+h-1,w,1,c);gfx_fill_rect(x,y,1,h,c);gfx_fill_rect(x+w-1,y,1,h,c);}
 void gfx_hline(int x,int y,int w,uint8_t c){gfx_fill_rect(x,y,w,1,c);} void gfx_vline(int x,int y,int h,uint8_t c){gfx_fill_rect(x,y,1,h,c);}
@@ -132,9 +171,64 @@ void gfx_glyph_scale(int x,int y,char ch,int sc,uint8_t fg,uint8_t bg,bool bold,
 void gfx_glyph(int x,int y,char ch,uint8_t fg,uint8_t bg){gfx_glyph_bmp(x,y,font8x8+(uint8_t)ch*8,fg,bg);}
 void gfx_char(char c,uint8_t fg,uint8_t bg){gfx_glyph(cursor_x,cursor_y,c,fg,bg);cursor_x+=8;if(cursor_x>LCD_WIDTH-8){cursor_x=0;cursor_y+=8;}}
 void gfx_puts_at(int x,int y,const char *s,uint8_t fg,uint8_t bg){if(y<0||y>LCD_HEIGHT-8)return;while(*s&&x<=LCD_WIDTH-8){if(x>=0)gfx_glyph(x,y,*s,fg,bg);s++;x+=8;}}
+void gfx_puts_fit(int x, int y, const char *s, uint8_t fg, uint8_t bg, int max_w) {
+    if (!s || max_w < FONT_W || y < 0 || y > LCD_HEIGHT - FONT_H) return;
+    int max_c = max_w / FONT_W;
+    int len = (int)strlen(s);
+    if (len <= max_c) { gfx_puts_at(x, y, s, fg, bg); return; }
+    if (max_c <= 3) {
+        for (int i = 0; i < max_c; i++) gfx_glyph(x + i * FONT_W, y, s[i], fg, bg);
+        return;
+    }
+    int keep = max_c - 3;
+    for (int i = 0; i < keep; i++) gfx_glyph(x + i * FONT_W, y, s[i], fg, bg);
+    gfx_puts_at(x + keep * FONT_W, y, "...", fg, bg);
+}
 void gfx_print(const char*s){while(*s){char c=*s++;if(c=='\n'){cursor_x=0;cursor_y+=8;}else gfx_char(c,cursor_fg,cursor_bg);}} void gfx_print_n(const char*s,int n){while(n--&&*s)gfx_char(*s++,cursor_fg,cursor_bg);}
 void gfx_blit(int x,int y,int w,int h,const uint8_t*d){if(!gfx_fb||!d)return;for(int r=0;r<h;r++)for(int c=0;c<w;c++){int xx=x+c,yy=y+r;if((unsigned)xx<LCD_WIDTH&&(unsigned)yy<LCD_HEIGHT&&d[r*w+c]!=0xff)gfx_fb[yy*LCD_WIDTH+xx]=d[r*w+c];}mark_dirty(x,y);mark_dirty(x+w-1,y+h-1);}
-void gfx_flush(void){if(!gfx_fb||dirty_x1<0||!lcd)return;if(dirty_x0<0)dirty_x0=0;if(dirty_y0<0)dirty_y0=0;if(dirty_x1>=LCD_WIDTH)dirty_x1=LCD_WIDTH-1;if(dirty_y1>=LCD_HEIGHT)dirty_y1=LCD_HEIGHT-1;if(dirty_x1>=dirty_x0&&dirty_y1>=dirty_y0){int w=dirty_x1-dirty_x0+1;set_window(dirty_x0,dirty_y0,dirty_x1,dirty_y1);for(int y=dirty_y0;y<=dirty_y1;y++){expand_line(gfx_fb+y*LCD_WIDTH+dirty_x0,linebuf,w);spi_bytes(linebuf,w*3);}}dirty_x0=LCD_WIDTH;dirty_y0=LCD_HEIGHT;dirty_x1=dirty_y1=-1;}
+void gfx_flush(void) {
+    if (!gfx_fb || dirty_x1 < 0 || !lcd) return;
+    if (dirty_x0 < 0) dirty_x0 = 0;
+    if (dirty_y0 < 0) dirty_y0 = 0;
+    if (dirty_x1 >= LCD_WIDTH) dirty_x1 = LCD_WIDTH - 1;
+    if (dirty_y1 >= LCD_HEIGHT) dirty_y1 = LCD_HEIGHT - 1;
+    if (dirty_x1 >= dirty_x0 && dirty_y1 >= dirty_y0) {
+        int w = dirty_x1 - dirty_x0 + 1;
+        set_window((uint16_t)dirty_x0, (uint16_t)dirty_y0,
+                   (uint16_t)dirty_x1, (uint16_t)dirty_y1);
+        for (int y = dirty_y0; y <= dirty_y1; y++) {
+            expand_line(gfx_fb + (size_t)y * LCD_WIDTH + dirty_x0, linebuf, w);
+            spi_bytes(linebuf, (size_t)w * 3);
+        }
+    }
+    dirty_x0 = LCD_WIDTH; dirty_y0 = LCD_HEIGHT; dirty_x1 = dirty_y1 = -1;
+}
 void gfx_flush_full(void){dirty_x0=dirty_y0=0;dirty_x1=LCD_WIDTH-1;dirty_y1=LCD_HEIGHT-1;gfx_flush();}
-void gfx_scroll_up(int px,uint8_t fill){if(!gfx_fb||px<=0)return;if(px>=LCD_HEIGHT)memset(gfx_fb,fill,LCD_WIDTH*LCD_HEIGHT);else{memmove(gfx_fb,gfx_fb+px*LCD_WIDTH,(LCD_HEIGHT-px)*LCD_WIDTH);memset(gfx_fb+(LCD_HEIGHT-px)*LCD_WIDTH,fill,px*LCD_WIDTH);}dirty_x0=dirty_y0=0;dirty_x1=LCD_WIDTH-1;dirty_y1=LCD_HEIGHT-1;}
-void gfx_scroll_region_up(int x,int y,int w,int h,int px,uint8_t fill){if(!gfx_fb)return;if(x<0){w+=x;x=0;}if(y<0){h+=y;y=0;}if(x+w>LCD_WIDTH)w=LCD_WIDTH-x;if(y+h>LCD_HEIGHT)h=LCD_HEIGHT-y;if(w<=0||h<=0)return;if(px<0)px=0;if(px>h)px=h;for(int r=0;r<h-px;r++)memmove(gfx_fb+(y+r)*LCD_WIDTH+x,gfx_fb+(y+r+px)*LCD_WIDTH+x,w);for(int r=h-px;r<h;r++)memset(gfx_fb+(y+r)*LCD_WIDTH+x,fill,w);mark_dirty(x,y);mark_dirty(x+w-1,y+h-1);}
+void gfx_scroll_up(int px,uint8_t fill) {
+    if (!gfx_fb || px <= 0) return;
+    if (px >= LCD_HEIGHT)
+        fb_memset(gfx_fb, fill, (size_t)LCD_WIDTH * LCD_HEIGHT);
+    else {
+        fb_memcpy(gfx_fb, gfx_fb + (size_t)px * LCD_WIDTH,
+                  (size_t)(LCD_HEIGHT - px) * LCD_WIDTH);
+        fb_memset(gfx_fb + (size_t)(LCD_HEIGHT - px) * LCD_WIDTH, fill,
+                  (size_t)px * LCD_WIDTH);
+    }
+    dirty_x0 = dirty_y0 = 0; dirty_x1 = LCD_WIDTH - 1; dirty_y1 = LCD_HEIGHT - 1;
+}
+void gfx_scroll_region_up(int x,int y,int w,int h,int px,uint8_t fill) {
+    if (!gfx_fb) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+    if (w <= 0 || h <= 0) return;
+    if (px < 0) px = 0;
+    if (px > h) px = h;
+    for (int r = 0; r < h - px; r++)
+        fb_memcpy(gfx_fb + (size_t)(y + r) * LCD_WIDTH + x,
+                  gfx_fb + (size_t)(y + r + px) * LCD_WIDTH + x, (size_t)w);
+    for (int r = h - px; r < h; r++)
+        fb_memset(gfx_fb + (size_t)(y + r) * LCD_WIDTH + x, fill, (size_t)w);
+    mark_dirty(x, y); mark_dirty(x + w - 1, y + h - 1);
+}

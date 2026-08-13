@@ -324,6 +324,23 @@ void gfx_puts_at(int x, int y, const char *s, uint8_t fg, uint8_t bg) {
     }
 }
 
+void gfx_puts_fit(int x, int y, const char *s, uint8_t fg, uint8_t bg, int max_w) {
+    if (!s || max_w < FONT_W || y < 0 || y > LCD_HEIGHT - FONT_H) return;
+    int max_c = max_w / FONT_W;
+    int len = (int)strlen(s);
+    if (len <= max_c) {
+        gfx_puts_at(x, y, s, fg, bg);
+        return;
+    }
+    if (max_c <= 3) {
+        for (int i = 0; i < max_c; i++) gfx_glyph(x + i * FONT_W, y, s[i], fg, bg);
+        return;
+    }
+    int keep = max_c - 3;
+    for (int i = 0; i < keep; i++) gfx_glyph(x + i * FONT_W, y, s[i], fg, bg);
+    gfx_puts_at(x + keep * FONT_W, y, "...", fg, bg);
+}
+
 void gfx_print(const char *s) {
     while (*s) {
         char c = *s++;

@@ -93,8 +93,11 @@ void os_draw_status_bar(void) {
     gfx_fill_rect(0, 0, LCD_WIDTH, STATUS_H, COL_DKBLUE);
     int bat = kbd_battery_percent();
     char buf[48];
-    snprintf(buf, sizeof(buf), "PRetroCalc OS v1.0  BAT:%3d%% %s", bat < 0 ? 0 : bat,
-             os_sd_present ? "SD" : "  ");
+    if (bat < 0)
+        snprintf(buf, sizeof(buf), "PRetroCalc OS v1.0  BAT:---%% %s", os_sd_present ? "SD" : "  ");
+    else
+        snprintf(buf, sizeof(buf), "PRetroCalc OS v1.0  BAT:%3d%% %s", bat,
+                 os_sd_present ? "SD" : "  ");
     gfx_puts_at(2, 1, buf, COL_WHITE, COL_DKBLUE);
     gfx_hline(0, STATUS_H - 1, LCD_WIDTH, COL_CYAN);
 }
@@ -154,9 +157,13 @@ void os_gem_desktop_bg(void) {
 void os_gem_menubar(const char *left, const char *right) {
     gfx_fill_rect(0, 0, LCD_WIDTH, 12, GEM_WHITE);
     gfx_hline(0, 11, LCD_WIDTH, GEM_BLACK);
-    gfx_puts_at(4, 2, left, GEM_BLACK, GEM_WHITE);
-    int rw = strlen(right) * 8;
-    gfx_puts_at(LCD_WIDTH - rw - 4, 2, right, GEM_BLACK, GEM_WHITE);
+    int rw = right ? (int)strlen(right) * FONT_W : 0;
+    if (rw > LCD_WIDTH / 2) rw = (LCD_WIDTH / 2 / FONT_W) * FONT_W;
+    int left_max = LCD_WIDTH - rw - 12;
+    if (left_max < FONT_W) left_max = FONT_W;
+    gfx_puts_fit(4, 2, left, GEM_BLACK, GEM_WHITE, left_max);
+    if (right && rw > 0)
+        gfx_puts_fit(LCD_WIDTH - rw - 4, 2, right, GEM_BLACK, GEM_WHITE, rw);
 }
 
 void os_window(const char *title, int *cx, int *cy, int *cw, int *ch) {
@@ -173,9 +180,14 @@ void os_window(const char *title, int *cx, int *cy, int *cw, int *ch) {
     gfx_hline(wx + 2, wy + 2 + WIN_TITLE_H, ww - 4, GEM_BLACK);
     /* close box (GEM: hollow square, top-left) */
     gfx_rect(wx + 5, wy + 5, 8, 8, GEM_BLACK);
-    /* title centered with dashed underline look (GEM) */
-    int tw = strlen(title) * 8;
-    gfx_puts_at(wx + (ww - tw) / 2, wy + 5, title, GEM_BLACK, GEM_WHITE);
+    /* title centered between close box and fuller box; clip if too long */
+    int title_lo = wx + 16, title_hi = wx + ww - 16;
+    int title_max = title_hi - title_lo;
+    int tw = (int)strlen(title) * FONT_W;
+    if (tw > title_max) tw = (title_max / FONT_W) * FONT_W;
+    int tx = wx + (ww - tw) / 2;
+    if (tx < title_lo) tx = title_lo;
+    gfx_puts_fit(tx, wy + 5, title, GEM_BLACK, GEM_WHITE, title_hi - tx);
     /* right-side "fuller" box (GEM has an outlined square at right) */
     gfx_rect(wx + ww - 13, wy + 5, 8, 8, GEM_BLACK);
     /* client area */

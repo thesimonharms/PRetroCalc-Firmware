@@ -1,8 +1,9 @@
 /* PRetroCalc OS - LLM chat app (plain HTTP over WiFi).
  * Designed for LAN LLM servers that don't need TLS:
+ *   - malaikat:          http://<ip>:8080/v1/chat/completions  (OpenAI-compat)
  *   - Ollama:            http://<ip>:11434/api/generate
  *   - LM Studio:         http://<ip>:1234/v1/chat/completions  (OpenAI-compat)
- *   - llama.cpp server:  http://<ip>:8080/completion
+ *   - llama.cpp server:  http://<ip>:8080/completion           (legacy)
  *   - any OpenAI-compat: http://<ip>:<port>/v1/chat/completions
  * Config is stored on SD card as CHAT.CFG:
  *   line1 = ssid
@@ -11,8 +12,8 @@
  *   line4 = port
  *   line5 = path
  *   line6 = model name
- *   line7 = api  (optional): ollama | lmstudio | openai | llamacpp
- *           "lmstudio" and "openai" are synonyms (same request/response shape).
+ *   line7 = api  (optional): malaikat | ollama | lmstudio | openai | llamacpp
+ *           "malaikat", "lmstudio", and "openai" share the OpenAI chat shape.
  *           If line7 is missing, the API is auto-detected from path/port.
  * If CHAT.CFG is missing, the app prompts for server type + ssid/pass/host and
  * writes CHAT.CFG for next time.
@@ -387,15 +388,20 @@ static const char *short_model_name(const char *m) {
 }
 
 static char ssid[64], pass[64], host[64], port_s[8], path[128], model[48];
-static char api_s[16];   /* optional CFG line7: ollama|lmstudio|openai|llamacpp */
+static char api_s[16];   /* CFG line7: malaikat|ollama|lmstudio|openai|llamacpp */
 
-/* API shape for request body + model listing. lmstudio == openai. */
+/* API shape for request body + model listing. malaikat/lmstudio == openai chat. */
 typedef enum {
     API_OLLAMA = 0,
     API_OPENAI,      /* OpenAI-compat: LM Studio, text-gen-webui, vLLM, etc. */
-    API_LLAMACPP
+    API_MALAIKAT,    /* malaikat (llama.cpp wrapper) OpenAI chat on :8080/v1 */
+    API_LLAMACPP     /* legacy llama.cpp /completion */
 } api_mode_t;
 static api_mode_t api_mode = API_OLLAMA;
+
+static bool api_uses_openai_chat(api_mode_t m) {
+    return m == API_OPENAI || m == API_MALAIKAT;
+}
 
 static void str_tolower_copy(char *dst, const char *src, int max) {
     int i = 0;
@@ -414,6 +420,7 @@ static bool parse_api_token(const char *s, api_mode_t *out) {
     const char *p = t;
     if (!strncmp(p, "api=", 4)) p += 4;
     if (!strcmp(p, "ollama"))                    { *out = API_OLLAMA;   return true; }
+    if (!strcmp(p, "malaikat"))                  { *out = API_MALAIKAT; return true; }
     if (!strcmp(p, "lmstudio") || !strcmp(p, "lm-studio") ||
         !strcmp(p, "openai")   || !strcmp(p, "oai")) { *out = API_OPENAI; return true; }
     if (!strcmp(p, "llamacpp") || !strcmp(p, "llama.cpp") ||
@@ -430,6 +437,12 @@ static void apply_api_defaults(api_mode_t m) {
             strncpy(path, "/v1/chat/completions", 127);
             if (!model[0]) strncpy(model, "", 47);
             strncpy(api_s, "lmstudio", 15);
+            break;
+        case API_MALAIKAT:
+            strncpy(port_s, "8080", 7);
+            strncpy(path, "/v1/chat/completions", 127);
+            if (!model[0]) strncpy(model, "", 47);
+            strncpy(api_s, "malaikat", 15);
             break;
         case API_LLAMACPP:
             strncpy(port_s, "8080", 7);
@@ -448,13 +461,15 @@ static void apply_api_defaults(api_mode_t m) {
 }
 
 /* Auto-detect API from path and/or port when CFG has no explicit api line.
- * Order matters: chat/completions must win over bare "completion". */
+ * Order matters: chat/completions must win over bare "completion".
+ * :8080 + /v1 is malaikat (OpenAI chat); bare /completion stays legacy llama.cpp. */
 static api_mode_t detect_api_mode(void) {
-    if (strstr(path, "chat/completions") || strstr(path, "/v1/")) return API_OPENAI;
+    int port = atoi(port_s);
+    if (strstr(path, "chat/completions") || strstr(path, "/v1/"))
+        return (port == 8080) ? API_MALAIKAT : API_OPENAI;
     if (strstr(path, "generate")) return API_OLLAMA;
     /* bare /completion (llama.cpp), not .../completions */
     if (strstr(path, "completion") && !strstr(path, "completions")) return API_LLAMACPP;
-    int port = atoi(port_s);
     if (port == 1234) return API_OPENAI;
     if (port == 8080) return API_LLAMACPP;
     if (port == 11434) return API_OLLAMA;
@@ -465,6 +480,7 @@ static void resolve_api_mode(bool had_explicit) {
     if (had_explicit) return;
     api_mode = detect_api_mode();
     switch (api_mode) {
+        case API_MALAIKAT: strncpy(api_s, "malaikat", 15); break;
         case API_OPENAI:   strncpy(api_s, "openai", 15); break;
         case API_LLAMACPP: strncpy(api_s, "llamacpp", 15); break;
         default:           strncpy(api_s, "ollama", 15); break;
@@ -473,6 +489,7 @@ static void resolve_api_mode(bool had_explicit) {
 
 static const char *api_mode_label(void) {
     switch (api_mode) {
+        case API_MALAIKAT: return "malaikat";
         case API_OPENAI:   return "OpenAI/LM Studio";
         case API_LLAMACPP: return "llama.cpp";
         default:           return "Ollama";
@@ -517,7 +534,8 @@ static bool load_config(void) {
             had_api = parse_api_token(api_s, &api_mode);
             if (had_api) {
                 /* keep user's path/port; only normalise the stored label */
-                if (api_mode == API_OPENAI) strncpy(api_s, "lmstudio", 15);
+                if (api_mode == API_MALAIKAT) strncpy(api_s, "malaikat", 15);
+                else if (api_mode == API_OPENAI) strncpy(api_s, "lmstudio", 15);
                 else if (api_mode == API_LLAMACPP) strncpy(api_s, "llamacpp", 15);
                 else strncpy(api_s, "ollama", 15);
             }
@@ -632,8 +650,8 @@ static void chat_pick_model(void) {
     int top = 0;
     for (;;) {
         gfx_fill_rect(gx, gy + CHAT_HEADER_H + 1, gw, gh - CHAT_HEADER_H - 1, GEM_WHITE);
-        gfx_puts_at(gx + 4, gy + CHAT_HEADER_H + 4, "Select model (Up/Dn=Move Enter=OK Esc=Cancel)",
-                     GEM_DGRAY, GEM_WHITE);
+        gfx_puts_fit(gx + 4, gy + CHAT_HEADER_H + 4, "Select model (Up/Dn Enter=OK Esc=Cancel)",
+                     GEM_DGRAY, GEM_WHITE, gw - 8);
         int list_y = gy + CHAT_HEADER_H + 16;
         int rows_avail = (gy + gh - 10 - list_y) / 8;
         if (rows_avail < 1) rows_avail = 1;
@@ -688,25 +706,27 @@ void app_chat(void) {
         ssid[0] = pass[0] = host[0] = model[0] = 0;
         api_s[0] = 0;
         gfx_puts_at(gx + 4, gy + 6, "No CHAT.CFG. Choose server type:", GEM_DGRAY, GEM_WHITE);
-        gfx_puts_at(gx + 4, gy + 18, "1=Ollama  2=LM Studio  3=Other", GEM_BLACK, GEM_WHITE);
-        gfx_puts_at(gx + 4, gy + 30, "(saved to SD as CHAT.CFG)", GEM_DGRAY, GEM_WHITE);
+        gfx_puts_at(gx + 4, gy + 18, "1=Ollama  2=LM Studio", GEM_BLACK, GEM_WHITE);
+        gfx_puts_at(gx + 4, gy + 30, "3=malaikat  4=Other", GEM_BLACK, GEM_WHITE);
+        gfx_puts_at(gx + 4, gy + 42, "(saved to SD as CHAT.CFG)", GEM_DGRAY, GEM_WHITE);
         gfx_flush();
         char choice[4] = {0};
-        if (win_read_line(gy + 48, "Type (1-3): ", choice, sizeof choice, false) < 0) return;
+        if (win_read_line(gy + 56, "Type (1-4): ", choice, sizeof choice, false) < 0) return;
         if (choice[0] == '2')      apply_api_defaults(API_OPENAI);
-        else if (choice[0] == '3') {
+        else if (choice[0] == '3') apply_api_defaults(API_MALAIKAT);
+        else if (choice[0] == '4') {
             /* manual: start from OpenAI-compat defaults, user can edit path later via CFG */
             apply_api_defaults(API_OPENAI);
             strncpy(api_s, "openai", 15);
         } else                     apply_api_defaults(API_OLLAMA);
 
-        if (win_read_line(gy + 62, "SSID: ", ssid, sizeof ssid, false) < 0) return;
-        if (win_read_line(gy + 76, "PASS: ", pass, sizeof pass, true) < 0) return;
-        if (win_read_line(gy + 90, "HOST: ", host, sizeof host, false) < 0) return;
+        if (win_read_line(gy + 70, "SSID: ", ssid, sizeof ssid, false) < 0) return;
+        if (win_read_line(gy + 84, "PASS: ", pass, sizeof pass, true) < 0) return;
+        if (win_read_line(gy + 98, "HOST: ", host, sizeof host, false) < 0) return;
         /* optional model; empty is fine — user can Ctrl+M after connect */
-        win_read_line(gy + 104, "MODEL (opt): ", model, sizeof model, false);
+        win_read_line(gy + 112, "MODEL (opt): ", model, sizeof model, false);
         if (save_config()) {
-            gfx_puts_at(gx + 4, gy + 120, "Saved CHAT.CFG", COL_LGREEN, GEM_WHITE);
+            gfx_puts_at(gx + 4, gy + 128, "Saved CHAT.CFG", COL_LGREEN, GEM_WHITE);
             gfx_flush();
             sleep_ms(400);
         }
@@ -782,7 +802,7 @@ void app_chat(void) {
         json_escape(msg, esc, sizeof esc);
         /* body shape is driven by api_mode (not a loose path substring), so
          * /v1/chat/completions is never mis-routed as llama.cpp /completion. */
-        if (api_mode == API_OPENAI)
+        if (api_uses_openai_chat(api_mode))
             snprintf(body, sizeof body,
                 "{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}],\"stream\":false}",
                 model, esc);
