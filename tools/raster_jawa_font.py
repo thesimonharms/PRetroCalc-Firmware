@@ -4,6 +4,8 @@
 Coordinate system (CRITICAL):
   All glyphs share one fixed pen / em crop so sandhangan overlay bases.
   Bases + marks use Pillow (reliable fixed-origin subtract).
+  Left marks (taling / dirga mure) are standalone glyphs — not subtract —
+  so the dip is not clipped at the em edge.
   Pasangan use HarfBuzz to select the real .pas glyph, then the ink is
   recentered into a compact lower-center slot of that same em.
   Below vowels on pasangan use OpenType u.ns.pas / uu.ns.pas / keret.ns.alt
@@ -35,6 +37,10 @@ PASANGAN_CPS = set(range(0xA98F, 0xA9B3))
 BASE_ANCHOR = "\uA98F"
 PANGKON = "\uA9C0"
 SIZES = (48, 64)
+# Taling / dirga mure are LEFT marks: HarfBuzz draws them before the aksara.
+# Pillow cluster-subtract puts them on the RIGHT of the em and crop_em clips
+# the dip. Render the standalone glyph instead so the full shape is kept.
+LEFT_MARKS = {0xA9BA, 0xA9BB}
 
 # Pillow render — same recipe that previously stacked marks correctly
 PIL_PX = 160
@@ -151,6 +157,12 @@ class PillowEm:
         return self.crop_em(img)
 
     def render_mark(self, cp: int) -> Image.Image:
+        # Left marks: full standalone glyph (dip must not be crop_em-clipped).
+        if cp in LEFT_MARKS:
+            img, d = self._canvas()
+            d.text((self.pen_x, self.pen_y), chr(cp), font=self.font, fill=0)
+            return self.crop_em(img)
+
         img, d = self._canvas()
         d.text((self.pen_x, self.pen_y), BASE_ANCHOR, font=self.font, fill=0)
         base_bin = img.point(lambda p: 255 if p < 200 else 0)
@@ -410,7 +422,8 @@ def main():
             pas_below_hi[cp] = Image.new("L", (pil.em_w, pil.em_h), 255)
 
     # Sanity: marks should have decent ink in expected regions
-    for cp, label in [(0xA9B6, "wulu"), (0xA9B8, "suku"), (0xA9BA, "taling")]:
+    for cp, label in [(0xA9B6, "wulu"), (0xA9B8, "suku"),
+                      (0xA9BA, "taling"), (0xA9BB, "dirgam")]:
         print(f"  mark {label} bbox={ink_bbox(base_hi[cp])}")
 
     composite_check(base_hi, pas_hi, pas_below_hi, ROOT / "tools" / "_composite_mbu.png")
@@ -511,6 +524,50 @@ def main():
         "bool font_jawa_is_below_mark(uint32_t cp) {",
         "    return font_jawa_is_below_vowel(cp) || font_jawa_is_medial(cp);",
         "}",
+        "bool font_jawa_is_left_mark(uint32_t cp) {",
+        "    return cp == 0xA9BA || cp == 0xA9BB; /* taling / dirga mure */",
+        "}",
+        "bool font_jawa_is_right_mark(uint32_t cp) {",
+        "    return cp == 0xA9B4 || cp == 0xA9B5; /* tarung / tolong */",
+        "}",
+        "/* Ink x-range of a Jawa bitmap (bit0 = left). x1 < 0 if empty. */",
+        "static void jawa_ink_xrange(const uint8_t *g, int *x0, int *x1) {",
+        "    int w = jawa_px, h = jawa_px, rb = (jawa_px + 7) / 8;",
+        "    *x0 = w;",
+        "    *x1 = -1;",
+        "    if (!g) return;",
+        "    for (int y = 0; y < h; y++) {",
+        "        for (int x = 0; x < w; x++) {",
+        "            if ((g[y * rb + (x >> 3)] >> (x & 7)) & 1) {",
+        "                if (x < *x0) *x0 = x;",
+        "                if (x > *x1) *x1 = x;",
+        "            }",
+        "        }",
+        "    }",
+        "}",
+        "",
+        "int font_jawa_left_mark_dx(void) {",
+        "    /* Full standalone taling lives in the em; shift so its right edge",
+        "     * (the dip) sits clearly left of nglegena. */",
+        "    const uint8_t *g = font_jawa_glyph(0xA9BA);",
+        "    int x0, x1;",
+        "    jawa_ink_xrange(g, &x0, &x1);",
+        "    if (x1 < 0) return 0;",
+        "    int base_left = jawa_px * 10 / 64; /* typical nglegena ink start */",
+        "    int gap = jawa_px * 3 / 64;",
+        "    return base_left - gap - x1;",
+        "}",
+        "int font_jawa_left_mark_extra(void) {",
+        "    const uint8_t *g = font_jawa_glyph(0xA9BA);",
+        "    int x0, x1;",
+        "    jawa_ink_xrange(g, &x0, &x1);",
+        "    if (x1 < 0) return jawa_px * 22 / 64;",
+        "    int dx = font_jawa_left_mark_dx();",
+        "    int pad = jawa_px * 4 / 64;",
+        "    int extra = pad - dx - x0;",
+        "    return extra > 0 ? extra : 0;",
+        "}",
+        "int font_jawa_right_mark_extra(void) { return jawa_px * 12 / 64; }",
         "bool font_jawa_is_base(uint32_t cp) {",
         "    return cp >= JAWA_CP_MIN && cp <= JAWA_CP_MAX && !font_jawa_is_mark(cp);",
         "}",
@@ -557,7 +614,8 @@ def main():
     print("64px bboxes:")
     for label, cp, tab in [
         ("ka", 0xA98F, all_base), ("ma", 0xA9A9, all_base), ("suku", 0xA9B8, all_base),
-        ("wulu", 0xA9B6, all_base), ("ba.pas", 0xA9A7, all_pas), ("la.pas", 0xA9AD, all_pas),
+        ("wulu", 0xA9B6, all_base), ("taling", 0xA9BA, all_base), ("dirgam", 0xA9BB, all_base),
+        ("ba.pas", 0xA9A7, all_pas), ("la.pas", 0xA9AD, all_pas),
         ("u.ns.pas", 0xA9B8, all_pas_below), ("uu.ns.pas", 0xA9B9, all_pas_below),
         ("keret.pas", 0xA9BD, all_pas_below),
     ]:

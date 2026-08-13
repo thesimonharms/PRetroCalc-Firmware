@@ -32,8 +32,15 @@ bool font_jawa_is_mark(uint32_t cp);
 bool font_jawa_is_below_vowel(uint32_t cp); /* suku / suku mendut / keret */
 bool font_jawa_is_medial(uint32_t cp);      /* pengkal / cakra */
 bool font_jawa_is_below_mark(uint32_t cp);  /* vowel | medial */
+bool font_jawa_is_left_mark(uint32_t cp);   /* taling / dirga mure — visual left */
+bool font_jawa_is_right_mark(uint32_t cp);  /* tarung / tolong — visual right */
 bool font_jawa_is_base(uint32_t cp);
 bool font_jawa_can_pasangan(uint32_t cp);
 int  font_jawa_advance(uint32_t cp);
+/* Blit dx for left marks (full taling/dirga mure, shifted left of aksara). */
+int  font_jawa_left_mark_dx(void);
+/* Extra cluster advance: left (taling) / right (tarung) so neighbors don't clip. */
+int  font_jawa_left_mark_extra(void);
+int  font_jawa_right_mark_extra(void);
 
 #endif

@@ -55,19 +55,20 @@ static bool wait_key(int *code) {
 
 static int utf8_decode(const char *s, int len, uint32_t *cp) {
     if (len <= 0) return 0;
-    unsigned char c = (unsigned char)s[0];
+    const unsigned char *u = (const unsigned char *)s;
+    unsigned char c = u[0];
     if (c < 0x80) { *cp = c; return 1; }
     if ((c & 0xE0) == 0xC0 && len >= 2) {
-        *cp = ((c & 0x1F) << 6) | (s[1] & 0x3F);
+        *cp = ((c & 0x1F) << 6) | (u[1] & 0x3F);
         return 2;
     }
     if ((c & 0xF0) == 0xE0 && len >= 3) {
-        *cp = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        *cp = ((c & 0x0F) << 12) | ((u[1] & 0x3F) << 6) | (u[2] & 0x3F);
         return 3;
     }
     if ((c & 0xF8) == 0xF0 && len >= 4) {
-        *cp = ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) |
-              ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        *cp = ((c & 0x07) << 18) | ((u[1] & 0x3F) << 12) |
+              ((u[2] & 0x3F) << 6) | (u[3] & 0x3F);
         return 4;
     }
     *cp = 0xFFFD;
@@ -123,7 +124,7 @@ static uint32_t jawa_map_key(int c, bool shift) {
         switch (c) {
         case '1': return 0xA9B6; /* wulu */
         case '2': return 0xA9B8; /* suku */
-        case '3': return 0xA9BA; /* taling */
+        case '3': return 0xA9BA; /* taling (type AFTER aksara; draws to the left) */
         case '4': return 0xA9B4; /* tarung */
         case '5': return 0xA9BC; /* pepet */
         case '6': return 0xA9BF; /* cakra */
@@ -362,7 +363,7 @@ static void draw_jawa_pasangan(int x, int y, uint32_t cp, uint8_t fg) {
     const uint8_t *g = font_jawa_pasangan(cp);
     if (!g) return;
     int jw = font_jawa_w(), jh = font_jawa_h(), jrb = font_jawa_row_bytes();
-    gfx_glyph_n(x, y, jw, jh, jrb, g, fg, 0xFF, false);
+    gfx_glyph_n(x, y + font_jawa_pasangan_dy(), jw, jh, jrb, g, fg, 0xFF, false);
 }
 
 /* Below vowel attached to pasangan (u.ns.pas) — same em origin as base/pas. */
@@ -487,8 +488,9 @@ static bool try_emit_pasangan(int pos, uint32_t cp, int style, int *lh) {
     return true;
 }
 
-/* Emit sandhangan on stack base if legal; returns true if consumed. */
-static bool try_emit_mark(int pos, uint32_t cp, int style, int *lh) {
+/* Emit sandhangan on stack base if legal; returns true if consumed.
+ * pen_x is the layout pen after the base — left/right marks may bump it. */
+static bool try_emit_mark(int pos, uint32_t cp, int style, int *lh, int *pen_x) {
     if (!font_jawa_is_mark(cp)) return false;
     int bi = find_stack_base();
     if (bi < 0) return false;
@@ -501,6 +503,33 @@ static bool try_emit_mark(int pos, uint32_t cp, int style, int *lh) {
             *lh = mlh;
             bump_line_lh(by, mlh);
         }
+    }
+    /* Taling / dirga mure: typed AFTER the aksara (Unicode), drawn to the LEFT.
+     * Shift the stack right so taling has room and doesn't clip the syllable. */
+    if (font_jawa_is_left_mark(cp)) {
+        int extra = font_jawa_left_mark_extra();
+        for (int i = 0; i < nt_ncells; i++) {
+            if (nt_cells[i].x == bx && nt_cells[i].y == by) {
+                nt_cells[i].x += extra;
+                if (nt_cells[i].advance) {
+                    int r = nt_cells[i].x + nt_cells[i].advance;
+                    if (r > nt_content_max_x) nt_content_max_x = r;
+                }
+            }
+        }
+        bx += extra;
+        if (pen_x) *pen_x += extra;
+    }
+    /* Tarung / tolong stick out past ink-advance; grow the base so the next
+     * aksara doesn't cover them. */
+    if (font_jawa_is_right_mark(cp) && pen_x) {
+        int extra = font_jawa_right_mark_extra();
+        int adv = nt_cells[bi].advance + extra;
+        if (adv > 255) adv = 255;
+        nt_cells[bi].advance = (uint8_t)adv;
+        *pen_x += extra;
+        int r = nt_cells[bi].x + nt_cells[bi].advance;
+        if (r > nt_content_max_x) nt_content_max_x = r;
     }
     emit_cell(pos, bx, by, cp, style, 0, mlh);
     return true;
@@ -639,7 +668,7 @@ static void layout_note(int scroll_line, int max_y) {
                     while (pos < end && nt_ncells < NT_CELLS) {
                         uint32_t cp; int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
                         int adv = cp_advance(cp);
-                        if (try_emit_mark(pos, cp, st, &lh)) { pos += n; continue; }
+                        if (try_emit_mark(pos, cp, st, &lh, &x)) { pos += n; continue; }
                         if (try_emit_pasangan(pos, cp, st, &lh)) { pos += n; continue; }
                         if (nt_cur == pos) nt_cur_cell = nt_ncells;
                         if (adv) x = place_adv(x, cp, &prev_cls);
@@ -666,7 +695,7 @@ static void layout_note(int scroll_line, int max_y) {
                     while (pos < end && nt_ncells < NT_CELLS) {
                         uint32_t cp; int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
                         int adv = cp_advance(cp);
-                        if (try_emit_mark(pos, cp, st, &lh)) { pos += n; continue; }
+                        if (try_emit_mark(pos, cp, st, &lh, &x)) { pos += n; continue; }
                         if (try_emit_pasangan(pos, cp, st, &lh)) { pos += n; continue; }
                         if (nt_cur == pos) nt_cur_cell = nt_ncells;
                         if (adv) x = place_adv(x, cp, &prev_cls);
@@ -685,7 +714,7 @@ static void layout_note(int scroll_line, int max_y) {
         int n = utf8_decode(nt_buf + pos, nt_len - pos, &cp);
         int adv = cp_advance(cp);
 
-        if (try_emit_mark(pos, cp, line_style, &lh)) { pos += n; continue; }
+        if (try_emit_mark(pos, cp, line_style, &lh, &x)) { pos += n; continue; }
         if (try_emit_pasangan(pos, cp, line_style, &lh)) { pos += n; continue; }
 
         /* Orphan mark (no base): placeholder advance so it stays visible. */
@@ -804,6 +833,9 @@ static void render_note(int scroll) {
                 draw_jawa_pasangan(sx, c->y, c->cp, fg);
             } else if (is_mark) {
                 int mx = sx, my = c->y;
+                /* Taling / dirga mure: same stack origin, blit shifted left. */
+                if (font_jawa_is_left_mark(c->cp))
+                    mx += font_jawa_left_mark_dx();
                 /* Below vowels on a pasangan cluster use the baked u.ns.pas
                  * (etc.) form at the same origin — no crude offset of normal
                  * suku. Medials stay on the regular mark glyph. */
