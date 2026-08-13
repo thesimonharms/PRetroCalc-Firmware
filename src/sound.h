@@ -33,6 +33,13 @@ void sound_off(void);
 void sound_update(void);                          /* call in main loop */
 void sound_play(const note_t *seq, int count);    /* blocking melody */
 
+/* PWM-as-DAC for emulator audio. 8-bit unipolar samples, 0 = silence. */
+#define SOUND_PCM_RATE 22050
+void sound_pcm_start(int rate_hz);
+void sound_pcm_stop(void);
+void sound_pcm_silence(void);
+int  sound_pcm_write(uint8_t left, uint8_t right); /* 1 queued, 0 if full */
+
 /* classic key-click */
 static inline void sound_click(void) { sound_beep(2400, 8); }
 

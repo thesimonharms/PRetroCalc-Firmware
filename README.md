@@ -24,7 +24,8 @@ continues on Xtensa.
 - **Apps:** file manager, text editor (F2 = save), **NOTES** (UTF-8 markdown +
   Aksara Jawa / Carakan keyboard), calculator (expression parser with
   `+ - * / % ^` and parentheses), system monitor, settings (LCD/keyboard
-  backlight, key click, power off), about screen, **LLM chat** over WiFi
+  backlight, key click, power off), about screen, **LLM chat** over WiFi,
+  **EMU** (Game Boy / Game Boy Color; more systems later)
 - **Games:** Snake, Breakout, Space Invaders, Conway's Game of Life
 - **WiFi/Networking:** ESP32 STA WiFi with a minimal plain-HTTP client. The
   CHAT app talks to LAN LLM servers that don't need TLS — **malaikat**,
@@ -82,6 +83,10 @@ Pick the CH343 COM port if PlatformIO does not auto-detect it:
 
 - **Launcher:** arrows to move, ENTER to run, `T` jumps straight to the terminal.
 - **Everywhere:** ESC exits back to the launcher.
+- **EMU:** copy `.gb` / `.gbc` ROMs into `EMU/` on the SD card. In-game:
+  arrows/WASD = D-pad, Z/Space = A, X = B, Enter = Start, Tab = Select,
+  F1 = pause, ESC = quit (writes `EMU/SAVES/<rom>.sav`). Large ROMs are
+  copied once into an on-flash cache.
 - **Terminal:** type `help`. Run scripts with `run STARS.PS`.
 - **SD card:** copy `sd-card/*.PS` to the card root. Write your own `.PS`
   files — see `sd-card/STARS.PS` for the language by example.
@@ -211,8 +216,8 @@ esp32s3/            PlatformIO project — ESP32-S3 HAL (this is what you flash)
   extra_script.py   stages shared apps from ../src
   include/          board.h + Pico API shims
   src/              gfx, keyboard, sound, SD, WiFi, main
-src/                shared OS / apps / PicoScript / Jawa font
-sd-card/            sample PicoScript programs + CHAT.CFG*.example
+src/                shared OS / apps / PicoScript / Jawa font / EMU
+sd-card/            sample PicoScript programs + CHAT.CFG*.example + EMU/
 tools/              Jawa font rasterizers
 ```
 

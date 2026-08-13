@@ -430,6 +430,52 @@ void gfx_flush_full(void) {
     gfx_flush();
 }
 
+void gfx_direct_begin(int x, int y, int w, int h) {
+    if (w <= 0 || h <= 0) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > LCD_WIDTH) w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+    if (w <= 0 || h <= 0) return;
+    if (dma_chan >= 0 && dma_channel_is_busy(dma_chan))
+        dma_channel_wait_for_finish_blocking(dma_chan);
+    set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+}
+
+void gfx_direct_rgb666(const uint8_t *rgb666, int n_pixels) {
+    if (!rgb666 || n_pixels <= 0) return;
+    spi_write_fast(rgb666, (size_t)n_pixels * 3);
+}
+
+void gfx_direct_begin_565(int x, int y, int w, int h) {
+    gfx_direct_begin(x, y, w, h);
+}
+
+void gfx_direct_rgb565(const uint16_t *px, int n_pixels) {
+    uint8_t tmp[96];
+    if (!px || n_pixels <= 0) return;
+    while (n_pixels > 0) {
+        int chunk = n_pixels > 32 ? 32 : n_pixels;
+        for (int i = 0; i < chunk; i++) {
+            uint16_t p = px[i];
+            p = (uint16_t)((p >> 8) | (p << 8));
+            tmp[i * 3]     = (uint8_t)((p >> 11) << 3);
+            tmp[i * 3 + 1] = (uint8_t)(((p >> 5) & 63) << 2);
+            tmp[i * 3 + 2] = (uint8_t)((p & 31) << 3);
+        }
+        gfx_direct_rgb666(tmp, chunk);
+        px += chunk;
+        n_pixels -= chunk;
+    }
+}
+
+void gfx_direct_end(void) {
+    if (dma_chan >= 0 && dma_channel_is_busy(dma_chan))
+        dma_channel_wait_for_finish_blocking(dma_chan);
+    while (spi_get_hw(LCD_SPI_MOD)->sr & SPI_SSPSR_BSY_BITS) tight_loop_contents();
+    gpio_put(LCD_PIN_CS, 1);
+}
+
 /* vertical scroll of the whole framebuffer by n pixels (for terminal) */
 void gfx_scroll_up(int px, uint8_t fill) {
     if (px <= 0) return;

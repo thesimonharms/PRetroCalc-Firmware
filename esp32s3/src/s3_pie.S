@@ -132,3 +132,37 @@ s3_pie_memcpy:
 .Lmc_done:
     retw.n
     .size   s3_pie_memcpy, .-s3_pie_memcpy
+
+    .align  4
+    .global s3_pie_scale2_u16
+    .type   s3_pie_scale2_u16, @function
+/* a2=dst, a3=src, a4=n_src pixels. Zip a vector with itself: each u16 twice. */
+s3_pie_scale2_u16:
+    entry   a1, 32
+    beqz    a4, .Lsc_done
+    srli    a5, a4, 3
+    beqz    a5, .Lsc_tail
+    loopnez a5, .Lsc_vec_end
+        ee.vld.128.ip q0, a3, 16
+        mv.qr         q1, q0
+        ee.vzip.16    q0, q1
+        ee.vst.128.ip q0, a2, 16
+        ee.vst.128.ip q1, a2, 16
+.Lsc_vec_end:
+    movi    a5, 7
+    and     a4, a4, a5
+
+.Lsc_tail:
+    beqz    a4, .Lsc_done
+.Lsc_tail_loop:
+    l16ui   a6, a3, 0
+    s16i    a6, a2, 0
+    s16i    a6, a2, 2
+    addi    a3, a3, 2
+    addi    a2, a2, 4
+    addi    a4, a4, -1
+    bnez    a4, .Lsc_tail_loop
+
+.Lsc_done:
+    retw.n
+    .size   s3_pie_scale2_u16, .-s3_pie_scale2_u16

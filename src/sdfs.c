@@ -63,6 +63,42 @@ bool sdfs_append_file(const char *path, const char *buf, uint32_t len) {
     return r == FR_OK && bw == len;
 }
 
+bool sdfs_exists(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    FILINFO fi;
+    return f_stat(path, &fi) == FR_OK;
+}
+
+static FIL ro;
+static bool ro_open;
+
+bool sdfs_open_ro(const char *path) {
+    if (!mounted || !path || !*path) return false;
+    if (ro_open) { f_close(&ro); ro_open = false; }
+    if (f_open(&ro, path, FA_READ) != FR_OK) return false;
+    ro_open = true;
+    return true;
+}
+
+void sdfs_close_ro(void) {
+    if (ro_open) { f_close(&ro); ro_open = false; }
+}
+
+uint32_t sdfs_ro_size(void) {
+    return ro_open ? (uint32_t)f_size(&ro) : 0;
+}
+
+bool sdfs_ro_seek(uint32_t off) {
+    return ro_open && f_lseek(&ro, off) == FR_OK;
+}
+
+int sdfs_ro_read(void *buf, uint32_t len) {
+    if (!ro_open || !buf) return -1;
+    UINT br = 0;
+    if (f_read(&ro, buf, len, &br) != FR_OK) return -1;
+    return (int)br;
+}
+
 int sdfs_list_dir(const char *path, char names[][48], int max, bool dirs_only) {
     if (!mounted) return 0;
     DIR d;

@@ -3,7 +3,7 @@
 
 /* Waveshare ESP32-S3-Pico pin map for the ClockworkPi PicoCalc. */
 #ifndef LCD_SPI_SPEED
-#define LCD_SPI_SPEED 40000000
+#define LCD_SPI_SPEED 80000000
 #endif
 #ifndef LCD_PIN_SCK
 #define LCD_PIN_SCK 35

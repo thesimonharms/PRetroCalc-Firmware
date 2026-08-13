@@ -28,5 +28,6 @@ void app_invaders(void);
 void app_life(void);
 void app_chat(void);
 void app_notes(void);
+void app_emu(void);
 
 #endif

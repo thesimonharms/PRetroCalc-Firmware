@@ -24,6 +24,10 @@ onboard Octal PSRAM pins on the Waveshare module. The double RGB332
 framebuffer of the Pico build is reduced to a **single** 96 KB buffer so
 everything fits in internal SRAM with WiFi.
 
+Flash layout (`partitions.csv`): 4 MB firmware, 8 MB `romcache` partition
+used by **EMU** so Game Boy ROMs larger than SRAM can still run (copied
+from the SD card once, then memory-mapped).
+
 ESP32-S3 @ 240 MHz, 16 MB flash, Arduino-ESP32 WiFi STA (plain HTTP, no TLS).
 
 ## Build

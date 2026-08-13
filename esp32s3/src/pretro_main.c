@@ -15,6 +15,7 @@ const app_t apps[] = {
     {"TERM","Command shell + PicoScript",app_terminal,COL_LGREEN}, {"FILES","SD card file manager",app_files,COL_CYAN},
     {"EDIT","Text editor",app_editor,COL_AMBER}, {"NOTES","Markdown + Aksara Jawa",app_notes,COL_YELLOW},
     {"CALC","Calculator",app_calc,COL_WHITE}, {"CHAT","LLM chat (malaikat/Ollama/…)",app_chat,COL_CYAN},
+    {"EMU","Game Boy / GBC emulator",app_emu,COL_LGREEN},
     {"SNAKE","Classic snake game",app_snake,COL_GREEN}, {"BREAKOUT","Brick breaker",app_breakout,COL_ORANGE},
     {"INVADERS","Space invaders",app_invaders,COL_MAGENTA}, {"LIFE","Conway's Game of Life",app_life,COL_YELLOW},
     {"MONITOR","System monitor",app_monitor,COL_BLUE}, {"SETTINGS","Backlight, sound, power",app_settings,COL_GRAY},
