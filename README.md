@@ -1,3 +1,7 @@
+> **Moved.** This GitHub copy is an archive. Use the Forgejo repository.
+>
+> **Canonical repository:** https://git.simonharms.com/thesimonharms/PRetroCalc-Firmware
+
 # PRetroCalc OS
 
 A retro-computer operating system for the **ClockworkPi PicoCalc**, written in C.
